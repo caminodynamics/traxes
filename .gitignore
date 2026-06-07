@@ -1,0 +1,72 @@
+############################################
+# Rust build artifacts
+############################################
+/target/
+**/*.rs.bk
+
+############################################
+# Python cache
+############################################
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+############################################
+# Logs & runtime outputs (NEVER publish)
+############################################
+logs/
+*.log
+
+############################################
+# Benchmark / stress / evaluation artifacts
+############################################
+stress_suite/
+benchmarks/
+results/
+execution_safety_bench*
+contention*
+bottleneck*
+timing*
+audit*
+performance*.log
+performance*.out
+temp_executed_*.txt
+
+############################################
+# Generated artifacts / dumps
+############################################
+artifacts/
+*.jsonl
+*.dump
+*.zip
+
+############################################
+# OS / editor noise
+############################################
+.vscode/
+.idea/
+.DS_Store
+
+############################################
+# Temporary scripts (keep only demo.bat)
+############################################
+fix-and-run*.bat
+Traxas*.bat
+*.tmp
+
+############################################
+# Optional local dev overrides
+############################################
+.env
+.env.local
+
+# Windsurf
+.windsurfrules
+
+# Analysis/working files
+*.diff
+*.md.bak
+current_engine_state.md
+benchmark_results.json
+README_STRIPE.md
