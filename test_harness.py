@@ -9,7 +9,7 @@ from urllib.error import URLError, HTTPError
 
 def load_payload(payload_type):
     """Load payload from file"""
-    filename = f"payloads/{payload_type}_tool_call.json"
+    filename = f"../demo/payloads/{payload_type}_tool_call.json"
     try:
         with open(filename, 'r') as f:
             return json.load(f)

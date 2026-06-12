@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn loads_policy_from_repo_relative_path() {
-        let path = "./policies/default_policy.yaml";
+        let path = "../demo/policies/default_policy.yaml";
         if !Path::new(path).exists() {
             return;
         }

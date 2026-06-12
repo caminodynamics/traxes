@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::io;
 use std::time::Instant;
 
-pub const DEFAULT_POLICY_PATH: &str = "./policies/default_policy.yaml";
+pub const DEFAULT_POLICY_PATH: &str = "../demo/policies/aws_staging_guardrails.yaml";
 
 #[derive(Debug, Clone)]
 pub struct PolicyBundle {

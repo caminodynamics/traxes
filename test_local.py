@@ -9,7 +9,7 @@ def test_payloads():
     print("Testing payload files...")
     
     try:
-        with open('payloads/valid_tool_call.json', 'r') as f:
+        with open('../demo/payloads/valid_tool_call.json', 'r') as f:
             valid_payload = json.load(f)
             print("+ Valid payload loaded successfully")
             print(f"  Tool: {valid_payload['tool_call']['name']}")
@@ -18,7 +18,7 @@ def test_payloads():
         return False
     
     try:
-        with open('payloads/malicious_injection.json', 'r') as f:
+        with open('../demo/payloads/malicious_injection.json', 'r') as f:
             malicious_payload = json.load(f)
             print("+ Malicious payload loaded successfully")
             print(f"  Tool: {malicious_payload['tool_call']['name']}")
@@ -103,7 +103,7 @@ def test_proxy_logic():
         handler = MockHandler()
         
         # Test valid payload
-        with open('payloads/valid_tool_call.json', 'r') as f:
+        with open('../demo/payloads/valid_tool_call.json', 'r') as f:
             valid_payload = json.load(f)
             is_malicious, reason = handler.is_malicious_payload(valid_payload)
             if not is_malicious:
@@ -113,7 +113,7 @@ def test_proxy_logic():
                 return False
         
         # Test malicious payload
-        with open('payloads/malicious_injection.json', 'r') as f:
+        with open('../demo/payloads/malicious_injection.json', 'r') as f:
             malicious_payload = json.load(f)
             is_malicious, reason = handler.is_malicious_payload(malicious_payload)
             if is_malicious:

@@ -37,7 +37,7 @@ fn test_allow_decision_artifact_generation() {
     };
     
     // Generate artifact
-    let artifact = ArtifactLogger::generate_artifact("test-decision-001", &action, &decision, "test-policy-hash");
+    let artifact = ArtifactLogger::generate_artifact("test-decision-001", &action, &decision, "test-policy-hash", "success".to_string());
     
     // Verify artifact fields
     assert_eq!(artifact.decision, "ALLOW");
@@ -89,7 +89,7 @@ fn test_deny_decision_artifact_generation() {
     };
     
     // Generate artifact
-    let artifact = ArtifactLogger::generate_artifact("test-decision-002", &action, &decision, "test-policy-hash");
+    let artifact = ArtifactLogger::generate_artifact("test-decision-002", &action, &decision, "test-policy-hash", "success".to_string());
     
     // Verify artifact fields
     assert_eq!(artifact.decision, "DENY");
@@ -138,7 +138,7 @@ fn test_artifact_serialization() {
         }),
     };
     
-    let artifact = ArtifactLogger::generate_artifact("test-decision", &action, &decision, "test-hash");
+    let artifact = ArtifactLogger::generate_artifact("test-decision", &action, &decision, "test-hash", "success".to_string());
     
     // Serialize to JSON
     let json_str = serde_json::to_string_pretty(&artifact)
@@ -187,8 +187,8 @@ fn test_artifact_sha256_hash() {
         }),
     };
     
-    let artifact1 = ArtifactLogger::generate_artifact("test-decision-001", &action, &decision, "test-hash");
-    let artifact2 = ArtifactLogger::generate_artifact("test-decision-001", &action, &decision, "test-hash");
+    let artifact1 = ArtifactLogger::generate_artifact("test-decision-001", &action, &decision, "test-hash", "success".to_string());
+    let artifact2 = ArtifactLogger::generate_artifact("test-decision-001", &action, &decision, "test-hash", "success".to_string());
     
     // Same inputs should produce same hash
     assert_eq!(artifact1.sha256_hash, artifact2.sha256_hash);
@@ -228,7 +228,7 @@ fn test_artifact_file_write() {
         }),
     };
     
-    let artifact = ArtifactLogger::generate_artifact("test-decision-write", &action, &decision, "test-hash");
+    let artifact = ArtifactLogger::generate_artifact("test-decision-write", &action, &decision, "test-hash", "success".to_string());
     
     // Write to file
     let file_path = ArtifactLogger::write_sync(&artifact)
@@ -279,7 +279,7 @@ fn test_artifact_performance_metrics() {
         }),
     };
     
-    let artifact = ArtifactLogger::generate_artifact("test-decision-perf", &action, &decision, "test-hash");
+    let artifact = ArtifactLogger::generate_artifact("test-decision-perf", &action, &decision, "test-hash", "success".to_string());
     
     // Verify performance metrics
     assert_eq!(artifact.performance.evaluation_latency_us, 123.45);
@@ -317,7 +317,7 @@ fn test_artifact_side_effect_prevention() {
         }),
     };
     
-    let artifact = ArtifactLogger::generate_artifact("test-decision-sep", &action, &decision, "test-hash");
+    let artifact = ArtifactLogger::generate_artifact("test-decision-sep", &action, &decision, "test-hash", "success".to_string());
     
     // Verify side effect prevention info
     assert_eq!(artifact.side_effect_prevention.decision_effect, "DENY");

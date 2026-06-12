@@ -7,11 +7,11 @@ use std::fs;
 #[test]
 fn test_numeric_lte_complete_flow_allow() {
     // Load engine with numeric_lte policy
-    let engine = Engine::load("test_fixtures/policies/test_numeric_lte.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
         .expect("Failed to load policy");
     
     // Load payload with cost above threshold (should ALLOW)
-    let payload_str = fs::read_to_string("test_fixtures/payloads/numeric_lte_allow.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/numeric_lte_allow.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");
@@ -32,11 +32,11 @@ fn test_numeric_lte_complete_flow_allow() {
 #[test]
 fn test_numeric_lte_complete_flow_deny() {
     // Load engine with numeric_lte policy
-    let engine = Engine::load("test_fixtures/policies/test_numeric_lte.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
         .expect("Failed to load policy");
     
     // Load payload with cost below threshold (should DENY)
-    let payload_str = fs::read_to_string("test_fixtures/payloads/numeric_lte_deny.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/numeric_lte_deny.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");
@@ -55,11 +55,11 @@ fn test_numeric_lte_complete_flow_deny() {
 #[test]
 fn test_in_list_complete_flow_deny() {
     // Load engine with in_list policy
-    let engine = Engine::load("test_fixtures/policies/test_in_list.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_in_list.yaml")
         .expect("Failed to load policy");
     
     // Load payload with instance_type in list (should DENY)
-    let payload_str = fs::read_to_string("test_fixtures/payloads/in_list_deny.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/in_list_deny.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");
@@ -79,11 +79,11 @@ fn test_in_list_complete_flow_deny() {
 #[test]
 fn test_in_list_complete_flow_allow() {
     // Load engine with in_list policy
-    let engine = Engine::load("test_fixtures/policies/test_in_list.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_in_list.yaml")
         .expect("Failed to load policy");
     
     // Load payload with instance_type not in list (should ALLOW)
-    let payload_str = fs::read_to_string("test_fixtures/payloads/in_list_allow.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/in_list_allow.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");
@@ -102,11 +102,11 @@ fn test_in_list_complete_flow_allow() {
 #[test]
 fn test_not_in_complete_flow_deny() {
     // Load engine with not_in policy
-    let engine = Engine::load("test_fixtures/policies/test_not_in.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_not_in.yaml")
         .expect("Failed to load policy");
     
     // Load payload with instance_type not in allowed list (should DENY)
-    let payload_str = fs::read_to_string("test_fixtures/payloads/not_in_deny.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/not_in_deny.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");
@@ -125,11 +125,11 @@ fn test_not_in_complete_flow_deny() {
 #[test]
 fn test_not_in_complete_flow_allow() {
     // Load engine with not_in policy
-    let engine = Engine::load("test_fixtures/policies/test_not_in.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_not_in.yaml")
         .expect("Failed to load policy");
     
     // Load payload with instance_type in allowed list (should ALLOW)
-    let payload_str = fs::read_to_string("test_fixtures/payloads/not_in_allow.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/not_in_allow.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");
@@ -148,9 +148,9 @@ fn test_not_in_complete_flow_allow() {
 #[test]
 fn test_policy_hash_consistency() {
     // Load same policy twice and verify hash consistency
-    let engine1 = Engine::load("test_fixtures/policies/test_numeric_lte.yaml")
+    let engine1 = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
         .expect("Failed to load policy");
-    let engine2 = Engine::load("test_fixtures/policies/test_numeric_lte.yaml")
+    let engine2 = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
         .expect("Failed to load policy");
     
     assert_eq!(engine1.policy_hash(), engine2.policy_hash());
@@ -162,11 +162,11 @@ fn test_policy_hash_consistency() {
 #[test]
 fn test_evaluation_latency_measurement() {
     // Load engine
-    let engine = Engine::load("test_fixtures/policies/test_numeric_lte.yaml")
+    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
         .expect("Failed to load policy");
     
     // Load payload
-    let payload_str = fs::read_to_string("test_fixtures/payloads/numeric_lte_allow.json")
+    let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/numeric_lte_allow.json")
         .expect("Failed to load payload");
     let action: ProposedAction = serde_json::from_str(&payload_str)
         .expect("Failed to parse payload");

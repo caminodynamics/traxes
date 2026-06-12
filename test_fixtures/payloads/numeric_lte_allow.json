@@ -1,9 +1,0 @@
-{
-  "tool": "aws_ec2_provision",
-  "session_id": "test-session-001",
-  "environment": "test",
-  "parameters": {
-    "instance_cost_per_hour": 2.50,
-    "instance_type": "t3.medium"
-  }
-}
