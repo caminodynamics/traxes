@@ -1,0 +1,17 @@
+# Traxes/policies/aws_staging_guardrails.yaml
+apiVersion: Traxes.dev/v1
+kind: ExecutionPolicy
+metadata:
+  name: infra-cost-control
+  environment: staging
+target:
+  tool: aws_ec2_provision
+rules:
+  - name: deny_expensive_instances
+    condition: payload.proposed_action.parameters.instance_type not in ["t3.micro", "t3.small", "t3.medium"]
+    action: DENY
+    reason: "Instance type exceeds staging environment cost limits."
+  - name: require_cost_center_tag
+    condition: "'CostCenter' not in payload.tags"
+    action: DENY
+    reason: "Missing mandatory CostCenter tag for FinOps tracking."

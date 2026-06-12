@@ -1,0 +1,13 @@
+# Test policy for in_list operator
+apiVersion: Traxes.dev/v1
+kind: ExecutionPolicy
+metadata:
+  name: instance-type-allowlist-test
+  environment: test
+target:
+  tool: aws_ec2_provision
+rules:
+  - name: deny_allowed_instance_types
+    condition: payload.parameters.instance_type in ["t3.medium", "t3.small"]
+    action: DENY
+    reason: "Instance type in restricted list"

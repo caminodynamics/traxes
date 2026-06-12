@@ -1,0 +1,13 @@
+# Test policy for not_in operator
+apiVersion: Traxes.dev/v1
+kind: ExecutionPolicy
+metadata:
+  name: instance-type-denylist-test
+  environment: test
+target:
+  tool: aws_ec2_provision
+rules:
+  - name: deny_expensive_instance_types
+    condition: payload.parameters.instance_type not in ["t3.micro", "t3.small", "t3.medium"]
+    action: DENY
+    reason: "Instance type not in allowed list"

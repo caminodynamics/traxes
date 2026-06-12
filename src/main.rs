@@ -376,17 +376,7 @@ async fn evaluate_action(
     let evaluation = state.engine.evaluate(&action);
 
     // Enforcement gate: execute action if ALLOW, block if DENY
-    let execution_status = if evaluation.decision == "ALLOW" {
-        // Execute real action: write a temp file
-        let temp_file_path = format!("temp_executed_{}.txt", decision_id);
-        if let Err(e) = std::fs::write(&temp_file_path, format!("Action executed: {}", action.tool)) {
-            cli::debug_log(format!("[ENFORCEMENT] Failed to write temp file: {}", e));
-        }
-        "executed".to_string()
-    } else {
-        // DENY: block execution completely, no side effects
-        "blocked".to_string()
-    };
+    let execution_status = action::execute(&action, &evaluation.decision, &decision_id);
 
     if !cli::is_demo_mode() {
         sleep(Duration::from_millis(100)).await;

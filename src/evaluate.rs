@@ -50,17 +50,7 @@ pub async fn run_evaluate_with_emitter(
     let evaluation = engine.evaluate(&action);
 
     // Enforcement gate: execute action if ALLOW, block if DENY
-    let execution_status = if evaluation.decision == "ALLOW" {
-        // Execute real action: write a temp file
-        let temp_file_path = format!("temp_executed_{}.txt", decision_id);
-        if let Err(e) = std::fs::write(&temp_file_path, format!("Action executed: {}", action.tool)) {
-            cli::debug_log(format!("[ENFORCEMENT] Failed to write temp file: {}", e));
-        }
-        "executed".to_string()
-    } else {
-        // DENY: block execution completely, no side effects
-        "blocked".to_string()
-    };
+    let execution_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
 
     // Emit compact execution event instead of generating artifact directly
     let rule_trace = crate::execution_event::RuleTrace {
