@@ -205,3 +205,73 @@ If a system can act, it should be able to justify — deterministically — why 
 
 TRAXES is a deterministic execution gate that evaluates actions before execution and produces replayable audit artifacts for every decision.
 
+---
+
+## Documentation
+
+### Example Policy
+
+```yaml
+version: "2026-06-16"
+
+rules:
+  - id: instance_size_limit
+    action: create_instance
+    allow:
+      - t3.micro
+      - t3.small
+      - t3.medium
+    deny_reason: "instance type exceeds allowed limit"
+```
+
+Policies define what actions are allowed before execution.
+
+---
+
+### Example Decision Artifact
+
+```json
+{
+  "decision_id": "dec_7f92a1",
+  "decision": "DENY",
+  "policy_version": "2026-06-16",
+  "policy_hash": "sha256:8f3a91c2",
+  "action": {
+    "type": "create_instance",
+    "instance_type": "m5.large"
+  },
+  "matched_rules": [
+    {
+      "rule_id": "instance_size_limit",
+      "result": "FAIL"
+    }
+  ],
+  "timestamp": "2026-06-16T10:21:33Z",
+  "replayable": true
+}
+```
+
+Every decision is replayable and audit-safe.
+
+---
+
+### Integration Model
+
+```
+Agent / Workflow / System
+        │
+        ▼
+     TRAXES
+        │
+  ALLOW / DENY + ARTIFACT
+        │
+        ▼
+Execution Layer (AWS, APIs, robots, workflows)
+```
+
+- In-process library mode (embedded in runtime)
+- Sidecar mode (external evaluation service)
+- Middleware mode (pre-execution gate in tool pipeline)
+
+TRAXES sits between intent and execution.
+
