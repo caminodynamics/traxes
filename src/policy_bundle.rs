@@ -1,7 +1,7 @@
 //! Shared policy YAML loading and rule-detection logic for server + CLI evaluate paths.
 
 use crate::action::ProposedAction;
-use crate::cli;
+use crate::cli_utils;
 use crate::server_policy::{EvaluationResult, PolicyEvaluator, Rule};
 use serde_yaml::Value as YamlValue;
 use std::io;
@@ -47,7 +47,7 @@ pub fn evaluate_action_policy(action: &ProposedAction, policy_yaml: &str) -> Eva
         return result;
     }
 
-    cli::debug_log("[Traxes] No numeric_lte threshold found in policy; failing closed.");
+    cli_utils::debug_log("[Traxes] No numeric_lte threshold found in policy; failing closed.");
     missing_threshold_result(action)
 }
 
@@ -73,7 +73,7 @@ fn evaluate_numeric_lte(
         observed_value: cost_per_hour,
         observed_value_str: cost_per_hour.to_string(),
         policy_value: threshold.parse::<f64>().unwrap_or(0.0),
-        evaluation_expression: cli::compact_evaluation_expression(&rule.field, &rule.operator),
+        evaluation_expression: cli_utils::compact_evaluation_expression(&rule.field, &rule.operator),
         reason: "INFRA_COST_LIMIT_CHECK".to_string(),
     }
 }
@@ -119,7 +119,7 @@ fn evaluate_list_rule(
         observed_value,
         observed_value_str,
         policy_value: 0.0,
-        evaluation_expression: cli::compact_evaluation_expression(field, op),
+        evaluation_expression: cli_utils::compact_evaluation_expression(field, op),
         reason: "INSTANCE_TYPE_CONSTRAINT_CHECK".to_string(),
     }
 }
@@ -139,7 +139,7 @@ fn evaluate_deny_expensive_instances_fallback(
         }
     }
     let Some(s) = start_idx else {
-        cli::debug_log(
+        cli_utils::debug_log(
             "[Traxes] No opening bracket found after deny_expensive_instances; failing closed.",
         );
         return Some(missing_threshold_result(action));
@@ -159,7 +159,7 @@ fn evaluate_deny_expensive_instances_fallback(
         }
     }
     let Some(e) = end_idx else {
-        cli::debug_log(
+        cli_utils::debug_log(
             "[Traxes] No closing bracket found after deny_expensive_instances; failing closed.",
         );
         return Some(missing_threshold_result(action));
@@ -175,7 +175,7 @@ fn evaluate_deny_expensive_instances_fallback(
                 }
             }
             if v.is_empty() {
-                cli::debug_log("[Traxes] No usable allowlist found; failing closed.");
+                cli_utils::debug_log("[Traxes] No usable allowlist found; failing closed.");
                 Some(missing_threshold_result(action))
             } else {
                 Some(evaluate_list_rule(
@@ -189,7 +189,7 @@ fn evaluate_deny_expensive_instances_fallback(
             }
         }
         _ => {
-            cli::debug_log("[Traxes] No usable allowlist found in raw slice; failing closed.");
+            cli_utils::debug_log("[Traxes] No usable allowlist found in raw slice; failing closed.");
             Some(missing_threshold_result(action))
         }
     }
@@ -213,7 +213,7 @@ fn find_numeric_lte_threshold(policy_yaml: &str) -> Option<String> {
     match serde_yaml::from_str::<YamlValue>(policy_yaml) {
         Ok(doc) => find_threshold(&doc),
         Err(e) => {
-            cli::debug_log(format!("[Traxes] Failed to parse policy YAML: {}", e));
+            cli_utils::debug_log(format!("[Traxes] Failed to parse policy YAML: {}", e));
             None
         }
     }
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn loads_policy_from_repo_relative_path() {
-        let path = "../demo/policies/default_policy.yaml";
+        let path = "../demo/policies/aws_staging_guardrails.yaml";
         if !Path::new(path).exists() {
             return;
         }

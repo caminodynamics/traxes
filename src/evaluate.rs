@@ -2,7 +2,7 @@
 
 use crate::action::ProposedAction;
 use crate::artifact::ArtifactLogger;
-use crate::cli;
+use crate::cli_utils;
 use crate::traxes_engine::Engine;
 use std::fs;
 use std::path::Path;
@@ -95,10 +95,10 @@ pub async fn run_evaluate_with_emitter(
     match event_emitter.try_emit(event) {
         Ok(_) => {}
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-            cli::debug_log(format!("[EVENT QUEUE FULL] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Dropping event {}", decision_id));
         }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-            cli::debug_log(format!("[EVENT QUEUE CLOSED] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Dropping event {}", decision_id));
         }
     }
 
@@ -126,7 +126,7 @@ pub fn render_terminal_output(
     decision_id: &str,
     policy_hash: &str,
 ) {
-    cli::print_request_output(cli::RequestOutput {
+    cli_utils::print_request_output(cli_utils::RequestOutput {
         action,
         result: &evaluation.result,
         evaluation_latency_us: evaluation.evaluation_latency_us,
@@ -369,7 +369,7 @@ fn run_single_evaluation(
         .as_micros() as u64;
 
     // Normalize decision outside the timed section
-    let (decision, _) = cli::normalize_decision(&result);
+    let (decision, _): (&str, String) = cli_utils::normalize_decision(&result);
 
     // Optionally write artifacts (outside timed section)
     if write_artifacts {

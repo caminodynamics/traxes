@@ -39,7 +39,7 @@ impl ArtifactEmitter {
 
             // Process the event off the hot path
             if let Err(e) = self.process_event(event).await {
-                crate::cli::debug_log(format!("[ArtifactEmitter] Failed to process event {}: {}", event_id, e));
+                crate::cli_utils::debug_log(format!("[ArtifactEmitter] Failed to process event {}: {}", event_id, e));
             }
         }
     }
@@ -51,7 +51,7 @@ impl ArtifactEmitter {
         let artifact = match self.event_to_artifact(event) {
             Ok(artifact) => artifact,
             Err(e) => {
-                crate::cli::debug_log(format!("[ArtifactEmitter] Failed to convert event to artifact: {}", e));
+                crate::cli_utils::debug_log(format!("[ArtifactEmitter] Failed to convert event to artifact: {}", e));
                 return Err(e);
             }
         };
@@ -60,7 +60,7 @@ impl ArtifactEmitter {
         match artifact.write_to_file().await {
             Ok(_) => {}
             Err(e) => {
-                crate::cli::debug_log(format!("[ArtifactEmitter] Failed to write artifact to disk: {}", e));
+                crate::cli_utils::debug_log(format!("[ArtifactEmitter] Failed to write artifact to disk: {}", e));
                 return Err(e);
             }
         };

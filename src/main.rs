@@ -32,14 +32,14 @@ fn write_artifact_on_exit<T: Serialize>(context: &T) {
     match json_result {
         Ok(json_content) => {
             if let Err(e) = std::fs::create_dir_all("logs") {
-                cli::debug_log(format!("[Traxes] Failed to create logs directory: {}", e));
+                cli_utils::debug_log(format!("[Traxes] Failed to create logs directory: {}", e));
             }
             if let Err(e) = std::fs::write("logs/artifact_latest.json", json_content) {
-                cli::debug_log(format!("[Traxes] Failed to write artifact_latest.json: {}", e));
+                cli_utils::debug_log(format!("[Traxes] Failed to write artifact_latest.json: {}", e));
             }
         }
         Err(e) => {
-            cli::debug_log(format!("[Traxes] Failed to serialize context: {}", e));
+            cli_utils::debug_log(format!("[Traxes] Failed to serialize context: {}", e));
         }
     }
 }
@@ -62,12 +62,16 @@ struct TimingMetadata {
 mod action;
 mod artifact;
 mod artifact_emitter;
+mod artifact_index;
 mod cli;
+mod cli_utils;
 mod evaluate;
 mod execution_event;
 mod policy_bundle;
 mod traxes_engine;
 mod server_policy;
+
+mod cli_layer;
 
 use action::ProposedAction;
 use artifact_emitter::{ArtifactEmitter, EventEmitter};
@@ -164,13 +168,15 @@ struct AppState {
 async fn main() {
     let raw_args: Vec<String> = env::args().collect();
     let explicit_demo_off = raw_args.iter().any(|a| a == "--demo-mode=false");
-    let (mut demo_mode, debug_mode, args) = cli::parse_demo_flags(raw_args);
+    let demo_fast = raw_args.iter().any(|a| a == "--demo-fast");
+    let (mut demo_mode, debug_mode, args): (bool, bool, Vec<String>) = cli_utils::parse_demo_flags(raw_args);
 
     if args.len() >= 2 && args[1] == "evaluate" && !explicit_demo_off {
         demo_mode = true;
     }
-    cli::set_demo_mode(demo_mode);
-    cli::set_debug_mode(debug_mode);
+    cli_utils::set_demo_mode(demo_mode);
+    cli_utils::set_debug_mode(debug_mode);
+    cli_utils::set_demo_fast(demo_fast);
 
     if args.len() < 2 {
         eprintln!("Usage: Traxes-demo <command> [--demo-mode] [--debug]");
@@ -179,6 +185,10 @@ async fn main() {
         eprintln!("  evaluate  <payload-file> - Evaluate a payload file and exit");
         eprintln!("  benchmark --iterations <N> --concurrency <N> --payload <file> - Run benchmark mode");
         eprintln!("  show-latest-artifact [--raw] - Display the most recent artifact");
+        eprintln!("  eval      <allow|deny|file> - Quick evaluation (new CLI)");
+        eprintln!("  artifacts <list|last|show> - Artifact management (new CLI)");
+        eprintln!("  replay    <id> - Replay an artifact (new CLI)");
+        eprintln!("  status    - Show engine status (new CLI)");
         eprintln!("Flags:");
         eprintln!("  --demo-mode       Compact investor/demo terminal output (default for evaluate)");
         eprintln!("  --demo-mode=false Legacy verbose output");
@@ -193,6 +203,44 @@ async fn main() {
     }
 
     match args[1].as_str() {
+        "eval" => {
+            cli_layer::run().await;
+            return;
+        }
+        "demo" => {
+            cli::demo::run_async().await;
+            return;
+        }
+        "artifacts" => {
+            let subcommand = args.get(2).map(|s| s.as_str()).unwrap_or("list");
+            match subcommand {
+                "last" => {
+                    let full = args.get(3).map(|s| s.as_str()) == Some("--full");
+                    cli::artifacts::last(full);
+                    return;
+                }
+                "list" => {
+                    cli::artifacts::list();
+                    return;
+                }
+                "show" => {
+                    cli::artifacts::show(args.get(3));
+                    return;
+                }
+                _ => {
+                    cli::artifacts::list();
+                    return;
+                }
+            }
+        }
+        "replay" => {
+            cli_layer::run().await;
+            return;
+        }
+        "status" => {
+            cli_layer::run().await;
+            return;
+        }
         "server" => {
             // Server mode: initialize all server infrastructure here only
             // Initialize event emitter with bounded queue (capacity: 1000 events)
@@ -207,7 +255,7 @@ async fn main() {
             let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash);
             tokio::spawn(artifact_emitter.run());
 
-            if !cli::is_demo_mode() {
+            if !cli_utils::is_demo_mode() {
                 println!("[Traxes] Event emitter initialized with capacity: 1000");
                 println!("[Traxes] Artifact emitter worker spawned");
             }
@@ -230,7 +278,7 @@ async fn main() {
             let listener = tokio::net::TcpListener::bind(&bind_address)
                 .await
                 .expect("Failed to bind to address");
-            if cli::is_demo_mode() {
+            if cli_utils::is_demo_mode() {
                 println!("Traxes demo server → http://{}/evaluate  (--demo-mode)", bind_address);
             } else {
                 println!("Traxes Engine listening on http://{}", bind_address);
@@ -369,7 +417,7 @@ async fn evaluate_action(
     use sha2::Digest;
     let action_hash = format!("{:x}", sha2::Sha256::digest(serde_json::to_string(&action).unwrap_or_default()));
 
-    if !cli::is_demo_mode() {
+    if !cli_utils::is_demo_mode() {
         sleep(Duration::from_millis(150)).await;
     }
 
@@ -378,7 +426,7 @@ async fn evaluate_action(
     // Enforcement gate: execute action if ALLOW, block if DENY
     let execution_status = action::execute(&action, &evaluation.decision, &decision_id);
 
-    if !cli::is_demo_mode() {
+    if !cli_utils::is_demo_mode() {
         sleep(Duration::from_millis(100)).await;
     }
 
@@ -430,10 +478,10 @@ async fn evaluate_action(
     match state.event_emitter.try_emit(event) {
         Ok(_) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
-            cli::debug_log(format!("[EVENT QUEUE FULL] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Dropping event {}", decision_id));
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
-            cli::debug_log(format!("[EVENT QUEUE CLOSED] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Dropping event {}", decision_id));
         }
     }
     let _event_io_time_us = event_io_start.elapsed().as_micros() as f64;

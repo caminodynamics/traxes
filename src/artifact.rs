@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::action::ProposedAction;
-use crate::cli;
+use crate::cli_utils;
 use crate::traxes_engine::EvaluationDecision;
 use crate::server_policy::EvaluationResult;
 
@@ -126,12 +126,12 @@ impl AuditArtifact {
         policy_hash: String,
         execution_status: String,
     ) -> Self {
-        let (normalized_decision, explicit_reason) = cli::normalize_decision(evaluation_result);
+        let (normalized_decision, explicit_reason): (&str, String) = cli_utils::normalize_decision(evaluation_result);
         let reason = if normalized_decision == "DENY" {
             if !explicit_reason.is_empty() {
-                cli::one_line_reason(&explicit_reason, evaluation_result)
+                cli_utils::one_line_reason(&explicit_reason, evaluation_result)
             } else {
-                cli::human_reason_code(&evaluation_result.reason)
+                cli_utils::human_reason_code(&evaluation_result.reason)
             }
         } else {
             String::new() // No reason needed for ALLOW decisions
@@ -140,8 +140,8 @@ impl AuditArtifact {
         let sha256_hash =
             Self::calculate_sha256_hash(decision_id, action, normalized_decision, evaluation_result);
 
-        let evaluation_expression = if cli::is_demo_mode() {
-            cli::format_compact_rule(evaluation_result)
+        let evaluation_expression = if cli_utils::is_demo_mode() {
+            cli_utils::format_compact_rule(evaluation_result)
                 .strip_prefix("rule: ")
                 .unwrap_or(&evaluation_result.evaluation_expression)
                 .to_string()

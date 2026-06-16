@@ -10,7 +10,7 @@
 pub mod action;
 pub mod artifact;
 pub mod artifact_emitter;
-pub mod cli;
+pub mod cli_utils;
 pub mod engine;
 pub mod evaluate;
 pub mod execution_event;

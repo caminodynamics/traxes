@@ -2,9 +2,12 @@ use crate::action::ProposedAction;
 use crate::server_policy::EvaluationResult;
 use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 static DEMO_MODE: AtomicBool = AtomicBool::new(false);
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+static DEMO_FAST: AtomicBool = AtomicBool::new(false);
+static SUPPRESS_OUTPUT: Mutex<bool> = Mutex::new(false);
 
 const POLICY_BUNDLE: &str = "infra-cost-limit-v1";
 
@@ -19,6 +22,10 @@ pub fn set_debug_mode(enabled: bool) {
     DEBUG_MODE.store(enabled, Ordering::Relaxed);
 }
 
+pub fn set_demo_fast(enabled: bool) {
+    DEMO_FAST.store(enabled, Ordering::Relaxed);
+}
+
 pub fn is_demo_mode() -> bool {
     DEMO_MODE.load(Ordering::Relaxed)
 }
@@ -27,11 +34,38 @@ pub fn is_debug_mode() -> bool {
     DEBUG_MODE.load(Ordering::Relaxed)
 }
 
+pub fn is_demo_fast() -> bool {
+    DEMO_FAST.load(Ordering::Relaxed)
+}
+
 /// Log policy/debug messages only outside demo mode (or when --debug is set).
 pub fn debug_log(message: impl std::fmt::Display) {
     if !is_demo_mode() || is_debug_mode() {
         eprintln!("{}", message);
     }
+}
+
+pub struct StdoutGuard;
+
+impl StdoutGuard {
+    pub fn new() -> Self {
+        *SUPPRESS_OUTPUT.lock().unwrap() = true;
+        StdoutGuard
+    }
+}
+
+impl Drop for StdoutGuard {
+    fn drop(&mut self) {
+        *SUPPRESS_OUTPUT.lock().unwrap() = false;
+    }
+}
+
+pub fn suppress_stdout() -> StdoutGuard {
+    StdoutGuard::new()
+}
+
+pub fn is_output_suppressed() -> bool {
+    *SUPPRESS_OUTPUT.lock().unwrap()
 }
 
 pub struct RequestOutput<'a> {
@@ -93,6 +127,9 @@ pub fn print_request_output(out: RequestOutput<'_>) {
 
 
 fn print_request_legacy(out: &RequestOutput<'_>) {
+    if is_output_suppressed() {
+        return;
+    }
     legacy_print_received_action(out.action);
     legacy_print_evaluation(out.action, out.result);
     legacy_print_performance(
@@ -106,6 +143,9 @@ fn print_request_legacy(out: &RequestOutput<'_>) {
 }
 
 fn print_request_demo(out: &RequestOutput<'_>) {
+    if is_output_suppressed() {
+        return;
+    }
     let (decision, reason) = normalize_decision(out.result);
     let reason_line = one_line_reason(&reason, out.result);
 
@@ -136,6 +176,9 @@ fn print_request_demo(out: &RequestOutput<'_>) {
         println!("REASON → {}", reason_line);
     }
     println!();
+
+    // CLI delay for artifact reveal
+    std::thread::sleep(std::time::Duration::from_millis(600));
 
     // ARTIFACT SECTION
     println!("ARTIFACT");

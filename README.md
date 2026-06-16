@@ -1,148 +1,167 @@
-# Traxes (Developer Preview)
+# TRAXES
 
-A deterministic pre-execution policy engine that evaluates actions before execution and returns:
+TRAXES is a deterministic pre-execution evaluation layer for automated systems.
 
-**ALLOW / DENY + a replayable audit artifact**
-
----
-
-## What this is
-
-Traxes is a lightweight policy evaluation engine that sits before execution of an action (API call, infrastructure change, agent tool use, etc).
-
-It evaluates the action against a policy and produces:
-
-- A deterministic decision (ALLOW / DENY)
-- A structured audit artifact for replay and inspection
+It evaluates proposed actions against versioned policies before execution, producing structured, replayable decision artifacts that make system behavior auditable and reproducible.
 
 ---
 
-## Core Model
+## Core Concept
 
-Action → Evaluate → Decision → Artifact
+Modern automated systems increasingly execute real-world actions through:
 
-Every evaluation is deterministic and produces a replayable result.
+- AI agents
+- backend workflows
+- infrastructure automation
+- distributed systems
+
+However, most systems only log what happened after execution — not whether the action should have happened in the first place, or why it was allowed.
+
+TRAXES introduces a pre-execution decision boundary:
+
+Every action is evaluated before it is allowed to execute.
 
 ---
 
-## Example
+## Execution Model
 
-### Input (Action)
+TRAXES evaluates each proposed action through a deterministic pipeline:
+
+1. A system proposes an action
+2. TRAXES evaluates it against a versioned policy
+3. TRAXES returns a decision:
+   - ALLOW
+   - DENY
+   - (optional) MODIFY
+4. A structured audit artifact is generated for every evaluation
+
+---
+
+## Decision Output
+
+Each evaluation produces a replayable artifact containing:
+
+- decision outcome
+- policy hash reference
+- evaluation trace
+- metadata (timing, inputs, rule matches)
+- unique decision identifier
+
+These artifacts are designed to be:
+
+- reproducible
+- machine-readable
+- audit-ready
+- suitable for post-incident reconstruction
+
+---
+
+## Replayability Guarantee
+
+Given identical inputs and the same policy version:
+
+TRAXES produces identical decision outputs and artifacts.
+
+This enables deterministic reconstruction of system behavior over time.
+
+---
+
+## System Properties
+
+- Pre-execution enforcement — decisions occur before execution
+- Deterministic evaluation — identical input → identical output
+- Policy-bound decisions — every output tied to a versioned policy hash
+- Fail-closed behavior — invalid or missing policy results in DENY
+- No side effects during evaluation
+
+---
+
+## Example Flow
+
+### Input
 
 ```json
 {
-  "tool": "aws.rds.provision",
-  "environment": "staging",
-  "instance": "db.t3.medium"
+  "action": "create_instance",
+  "type": "t3.micro"
 }
-```
-
-### Policy
-
-Defined in policies/
-
-Example:
-
-```yaml
-allow:
-  environment: staging
-  instance: db.t3.medium
 ```
 
 ### Output
 
-**ALLOW**
+```
+ALLOW
+policy_hash: 8f3a91...
+artifact: decision_10291.json
+```
+
+### Input
 
 ```json
 {
-  "decision": "ALLOW",
-  "policy_version": "v1",
-  "action_hash": "abc123",
-  "timestamp": 1710000000
+  "action": "create_instance",
+  "type": "m5.large"
 }
 ```
 
----
+### Output
 
-## Why this exists
-
-Modern systems increasingly rely on:
-
-- distributed services
-- infrastructure automation
-- AI agents taking actions
-
-This creates a need for:
-
-- deterministic pre-execution validation of actions before they are executed
-
-Traxes provides a simple, explicit layer for that decision step.
-
----
-
-## Features
-
-- Deterministic policy evaluation
-- Pre-execution decision enforcement
-- Structured audit artifacts
-- Simple YAML-based policies
-- CLI + demo execution flow
-- Designed for agent / infra / API guardrails
-
----
-
-## Run the demo
-
-1. Build
-
-```bash
-cargo build
 ```
-
-2. Run example evaluation
-
-```bash
-cargo run --bin demo
-```
-
-3. Or use the script
-
-```bash
-./demo.bat
+DENY
+reason: instance type not allowed under policy constraints
+policy_hash: 8f3a91...
+artifact: decision_10292.json
 ```
 
 ---
 
-## Project Structure
+## Where TRAXES Fits
 
-- `policies/` → policy definitions (YAML)
-- `payloads/` → example actions
-- `src/` → core engine
-- `examples/` → sample integrations
-- `docs/` → extended docs
+TRAXES is designed for systems where actions are:
 
----
+- automated
+- distributed
+- irreversible or costly
+- safety or compliance sensitive
 
-## Output format
+Common environments include:
 
-Every evaluation produces:
+- AI agent execution pipelines (tool use, autonomous workflows)
+- backend automation systems (jobs, triggers, orchestration layers)
+- infrastructure provisioning systems (cloud resource creation, scaling)
+- robotics systems (real-world action execution with safety constraints)
+- drone and fleet coordination systems (multi-agent physical execution environments)
 
-- decision (ALLOW / DENY)
-- policy context
-- action metadata
-- replayable artifact
-
----
-
-## Status
-
-Developer preview / early system prototype.
-
-Core evaluation logic is stable. APIs and structure may evolve.
+In these environments, TRAXES acts as a pre-execution control boundary, ensuring actions are evaluated before they are executed.
 
 ---
 
-## License
+## Important Clarification
 
-TBD
+TRAXES is NOT:
+
+- a robotics system
+- a drone system
+- a geospatial engine
+- a workflow orchestration platform
+
+These are deployment environments, not the product definition.
+
+The core abstraction is:
+
+deterministic evaluation of proposed actions before execution.
+
+---
+
+## Design Principle
+
+TRAXES is built around one principle:
+
+If a system can act, it should be able to justify — deterministically — why that action was allowed.
+
+---
+
+## Summary
+
+TRAXES is a deterministic execution gate that evaluates actions before execution and produces replayable audit artifacts for every decision.
 

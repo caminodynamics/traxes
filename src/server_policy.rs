@@ -1,4 +1,4 @@
-use crate::cli;
+use crate::cli_utils;
 use serde::Serialize;
 
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ impl PolicyEvaluator {
                         }
                     }
                     _ => {
-                        cli::debug_log("[Traxes] SECURITY CRITICAL: Failed to parse fixed-point numeric strings cleanly.");
+                        cli_utils::debug_log("[Traxes] SECURITY CRITICAL: Failed to parse fixed-point numeric strings cleanly.");
                         None // Fail closed
                     }
                 }
@@ -116,7 +116,7 @@ impl PolicyEvaluator {
                 }
             }
             _ => {
-                cli::debug_log(format!("[Traxes] Unknown rule operator: {}", rule.operator));
+                cli_utils::debug_log(format!("[Traxes] Unknown rule operator: {}", rule.operator));
                 None // Fail closed on unknown operators
             }
         }
