@@ -6,6 +6,14 @@ It evaluates proposed actions against versioned policies before execution, produ
 
 ---
 
+## Demo
+
+Watch the 25-second TRAXES demonstration:
+
+[bettertraxesvid.mp4](https://github.com/caminodynamics/traxes/releases/download/v0.1.0/bettertraxesvid.mp4)
+
+---
+
 ## Quick Start
 
 ### Build
@@ -277,7 +285,11 @@ TRAXES sits between intent and execution.
 
 ---
 
-## Integration Examples
+## Planned Integration Targets
+
+The following examples illustrate intended deployment patterns and are not currently implemented in this repository.
+
+Do not imply that non-existent integrations are available today.
 
 ### Python In-Process Library
 
@@ -343,17 +355,25 @@ func EvaluateAction(action []byte) (string, error) {
 }
 ```
 
-### Performance Baseline
+### Benchmark Snapshot
 
-**Local evaluation (Rust release build):**
-- p50 latency: ~5µs
-- p99 latency: ~12µs
-- Throughput: ~200K ops/sec (single-threaded)
+Scenario: rogue-infra-agent
 
-**HTTP service (sidecar mode):**
-- p50 latency: ~5.3ms (including network round-trip)
-- p99 latency: ~12ms
-- Throughput: ~10K req/sec (concurrent)
+* Allowed: 5,497
+* Denied: 4,503
+* Policy bypasses: 0
 
-Integration adds minimal latency to execution pipelines.
+Core evaluation benchmark:
+
+| Threads | p50    | p95    | p99     | Throughput    |
+| ------- | ------ | ------ | ------- | ------------- |
+| 1       | 300 ns | 700 ns | 1100 ns | 2.85M ops/sec |
+| 4       | 300 ns | 800 ns | 1200 ns | 2.48M ops/sec |
+| 16      | 300 ns | 900 ns | 1400 ns | 2.20M ops/sec |
+
+Measured using the traxes-bench benchmark harness.
+
+Important note:
+
+These measurements represent core policy evaluation performance and should not be confused with full end-to-end application latency, artifact persistence, network transport, or external service overhead.
 
