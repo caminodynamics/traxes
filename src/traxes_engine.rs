@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 use std::io;
 use std::time::Instant;
 
-pub const DEFAULT_POLICY_PATH: &str = "../demo/policies/aws_staging_guardrails.yaml";
+pub const DEFAULT_POLICY_PATH: &str = "policies/aws_staging_guardrails.yaml";
+pub const DEFAULT_POLICY_YAML: &str = include_str!("../policies/aws_staging_guardrails.yaml");
 
 #[derive(Debug, Clone)]
 pub struct PolicyBundle {
@@ -37,12 +38,23 @@ impl EvaluationDecision {
 
 impl Engine {
     pub fn load_default_policies() -> Result<Self, io::Error> {
-        Self::load(DEFAULT_POLICY_PATH)
+        eprintln!("[Traxes] Loading embedded policy (compile-time)");
+        let policy_yaml = DEFAULT_POLICY_YAML.to_string();
+        let policy_hash = calculate_hash_from_content(&policy_yaml);
+        eprintln!("[Traxes] Policy loaded successfully. Hash: {}", policy_hash);
+        Ok(Self {
+            bundle: PolicyBundle {
+                policy_yaml,
+                policy_hash,
+            },
+        })
     }
 
     pub fn load(policy_path: &str) -> Result<Self, io::Error> {
+        eprintln!("[Traxes] Loading policy from: {}", policy_path);
         let policy_yaml = read_policy_yaml(policy_path)?;
         let policy_hash = calculate_policy_hash(policy_path)?;
+        eprintln!("[Traxes] Policy loaded successfully. Hash: {}", policy_hash);
         Ok(Self {
             bundle: PolicyBundle {
                 policy_yaml,
@@ -76,7 +88,11 @@ impl Engine {
 
 pub fn calculate_policy_hash(file_path: &str) -> io::Result<String> {
     let raw_content = std::fs::read_to_string(file_path)?;
-    let normalized = raw_content
+    Ok(calculate_hash_from_content(&raw_content))
+}
+
+pub fn calculate_hash_from_content(content: &str) -> String {
+    let normalized = content
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .trim_end_matches(|c| c == '\n' || c == '\r')
@@ -84,5 +100,5 @@ pub fn calculate_policy_hash(file_path: &str) -> io::Result<String> {
 
     let mut hasher = Sha256::new();
     hasher.update(normalized.as_bytes());
-    Ok(format!("{:x}", hasher.finalize()))
+    format!("{:x}", hasher.finalize())
 }

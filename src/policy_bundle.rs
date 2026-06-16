@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn loads_policy_from_repo_relative_path() {
-        let path = "../demo/policies/aws_staging_guardrails.yaml";
+        let path = "policies/aws_staging_guardrails.yaml";
         if !Path::new(path).exists() {
             return;
         }

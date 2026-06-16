@@ -5,12 +5,18 @@ pub async fn run_async(args: &[String]) {
     let input = args.get(0).cloned().unwrap_or("allow".to_string());
 
     let path = match input.as_str() {
-        "allow" => "../demo/payloads/allow_t3medium.json",
-        "deny" => "../demo/payloads/deny_t3large.json",
+        "allow" => "payloads/test_allowed_t3medium.json",
+        "deny" => "payloads/test_denied_m5large.json",
         other => other,
     };
 
-    let engine = Engine::load_default_policies().unwrap();
+    let engine = match Engine::load_default_policies() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("ERROR: Failed to load policy bundle: {}", e);
+            std::process::exit(1);
+        }
+    };
     let policy_hash = engine.policy_hash().to_string();
     let (event_emitter, event_rx) = crate::artifact_emitter::create_event_channel(100);
 
@@ -34,12 +40,12 @@ pub async fn run_async_silent(args: &[String]) -> Result<String, Box<dyn std::er
     let input = args.get(0).cloned().unwrap_or("allow".to_string());
 
     let path = match input.as_str() {
-        "allow" => "../demo/payloads/allow_t3medium.json",
-        "deny" => "../demo/payloads/deny_t3large.json",
+        "allow" => "payloads/test_allowed_t3medium.json",
+        "deny" => "payloads/test_denied_m5large.json",
         other => other,
     };
 
-    let engine = Engine::load_default_policies().unwrap();
+    let engine = Engine::load_default_policies()?;
     let policy_hash = engine.policy_hash().to_string();
     let (event_emitter, event_rx) = crate::artifact_emitter::create_event_channel(100);
 
