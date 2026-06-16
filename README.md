@@ -6,6 +6,46 @@ It evaluates proposed actions against versioned policies before execution, produ
 
 ---
 
+## Quick Start
+
+### Build
+
+```bash
+cargo build --release
+```
+
+### Run Demo
+
+```bash
+# Run interactive demo
+cargo run --release --quiet --bin traxes-demo -- demo
+
+# Run in fast mode (no delays)
+cargo run --release --quiet --bin traxes-demo -- demo --demo-fast
+```
+
+### Evaluate Actions
+
+```bash
+# ALLOW case
+cargo run --release --bin traxes-demo -- eval ../demo/payloads/allow_t3medium.json
+
+# DENY case
+cargo run --release --bin traxes-demo -- eval ../demo/payloads/deny_t3large.json
+```
+
+### View Artifacts
+
+```bash
+# View last artifact
+cargo run --release --bin traxes-demo -- artifacts last
+
+# View full artifact JSON
+cargo run --release --bin traxes-demo -- artifacts last --full
+```
+
+---
+
 ## Core Concept
 
 Modern automated systems increasingly execute real-world actions through:
