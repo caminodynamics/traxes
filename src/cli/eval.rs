@@ -23,7 +23,7 @@ pub async fn run_async(args: &[String]) {
     let emitter = crate::artifact_emitter::ArtifactEmitter::new(event_rx, policy_hash);
     tokio::spawn(emitter.run());
 
-    let result = run_evaluate_with_emitter(&path, event_emitter, &engine).await;
+    let result = run_evaluate_with_emitter(path.to_string(), event_emitter, &engine).await;
 
     match result {
         Ok(res) => {
@@ -55,7 +55,7 @@ pub async fn run_async_silent(args: &[String]) -> Result<String, Box<dyn std::er
     // Suppress stdout during evaluation
     let _guard = crate::cli_utils::suppress_stdout();
 
-    let result = run_evaluate_with_emitter(&path, event_emitter, &engine).await;
+    let result = run_evaluate_with_emitter(path.to_string(), event_emitter, &engine).await;
 
     match result {
         Ok(res) => Ok(res.decision),

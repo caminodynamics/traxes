@@ -17,29 +17,19 @@ pub struct EvaluateResult {
 }
 
 pub async fn run_evaluate_with_emitter(
-    payload_path: &str,
+    payload_path: String,
     event_emitter: crate::artifact_emitter::EventEmitter,
     engine: &crate::traxes_engine::Engine,
 ) -> Result<EvaluateResult, Box<dyn std::error::Error>> {
-    // Try the original path first
-    let payload_str = match fs::read_to_string(payload_path) {
-        Ok(content) => content,
-        Err(_) if !Path::new(payload_path).is_absolute() => {
-            // If relative path fails, try current directory first
-            let current_dir_path = Path::new(".").join(payload_path);
-            match fs::read_to_string(&current_dir_path) {
-                Ok(content) => content,
-                Err(_) => {
-                    // If that fails, try resolving from repo root
-                    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-                    let repo_root = Path::new(cargo_manifest_dir).parent().unwrap_or_else(|| Path::new(cargo_manifest_dir));
-                    let resolved_path = repo_root.join(payload_path);
-                    fs::read_to_string(&resolved_path)?
-                }
-            }
-        }
-        Err(e) => return Err(Box::new(e)),
+    // Resolve payload path from CARGO_MANIFEST_DIR for consistent behavior
+    let resolved_path = if Path::new(&payload_path).is_absolute() {
+        payload_path
+    } else {
+        let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+        Path::new(cargo_manifest_dir).join(&payload_path).to_string_lossy().to_string()
     };
+
+    let payload_str = fs::read_to_string(&resolved_path)?;
     
     let action: ProposedAction = serde_json::from_str(&payload_str)?;
 
@@ -205,17 +195,14 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     println!("Write artifacts: {}", write_artifacts);
     println!();
 
-    // Load payload ONCE
-    let payload_str = match fs::read_to_string(payload_path) {
-        Ok(content) => content,
-        Err(_) if !Path::new(payload_path).is_absolute() => {
-            let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-            let repo_root = Path::new(cargo_manifest_dir).parent().unwrap_or_else(|| Path::new(cargo_manifest_dir));
-            let resolved_path = repo_root.join(payload_path);
-            fs::read_to_string(&resolved_path)?
-        }
-        Err(e) => return Err(Box::new(e)),
+    // Load payload ONCE from CARGO_MANIFEST_DIR
+    let resolved_path = if Path::new(payload_path).is_absolute() {
+        payload_path.to_string()
+    } else {
+        let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+        Path::new(cargo_manifest_dir).join(payload_path).to_string_lossy().to_string()
     };
+    let payload_str = fs::read_to_string(&resolved_path)?;
 
     let action: ProposedAction = serde_json::from_str(&payload_str)?;
 

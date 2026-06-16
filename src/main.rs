@@ -325,7 +325,7 @@ async fn main() {
             tokio::spawn(artifact_emitter.run());
             
             // Run evaluation with event emitter
-            match evaluate::run_evaluate_with_emitter(&payload_path, event_emitter, &engine).await {
+            match evaluate::run_evaluate_with_emitter(payload_path, event_emitter, &engine).await {
                 Ok(result) => {
                     // Print result as JSON to stdout
                     println!("{}", serde_json::to_string(&result).unwrap_or_else(|e| {
