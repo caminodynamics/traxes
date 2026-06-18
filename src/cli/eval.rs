@@ -18,10 +18,14 @@ pub async fn run_async(args: &[String]) {
         }
     };
     let policy_hash = engine.policy_hash().to_string();
-    let (event_emitter, event_rx) = crate::artifact_emitter::create_event_channel(100);
+    let (event_emitter, event_receivers, event_counter) = crate::artifact_emitter::create_sharded_event_channels(2, 50);
 
-    let emitter = crate::artifact_emitter::ArtifactEmitter::new(event_rx, policy_hash);
-    tokio::spawn(emitter.run());
+    for event_rx in event_receivers {
+        let emitter = crate::artifact_emitter::ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
+        tokio::spawn(async move {
+            emitter.run().await;
+        });
+    }
 
     let result = run_evaluate_with_emitter(path.to_string(), event_emitter, &engine).await;
 
@@ -47,10 +51,14 @@ pub async fn run_async_silent(args: &[String]) -> Result<String, Box<dyn std::er
 
     let engine = Engine::load_default_policies()?;
     let policy_hash = engine.policy_hash().to_string();
-    let (event_emitter, event_rx) = crate::artifact_emitter::create_event_channel(100);
+    let (event_emitter, event_receivers, event_counter) = crate::artifact_emitter::create_sharded_event_channels(2, 50);
 
-    let emitter = crate::artifact_emitter::ArtifactEmitter::new(event_rx, policy_hash);
-    tokio::spawn(emitter.run());
+    for event_rx in event_receivers {
+        let emitter = crate::artifact_emitter::ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
+        tokio::spawn(async move {
+            emitter.run().await;
+        });
+    }
 
     // Suppress stdout during evaluation
     let _guard = crate::cli_utils::suppress_stdout();

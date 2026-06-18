@@ -36,3 +36,11 @@ path = "src/main.rs"
 [[bin]]
 name = "traxes-bench"
 path = "src/runner.rs"
+
+[[bin]]
+name = "audit_architecture"
+path = "src/audit_architecture.rs"
+
+[[bin]]
+name = "traxes-bench-kernel"
+path = "src/bench_kernel.rs"

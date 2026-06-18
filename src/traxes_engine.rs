@@ -28,6 +28,23 @@ pub struct EvaluationDecision {
     pub evaluation_latency_us: f64,
 }
 
+/// Lightweight decision record for hot path
+/// Contains minimal data needed for async artifact construction
+#[derive(Debug, Clone)]
+pub struct DecisionRecord {
+    pub decision: String,
+    pub session_id: String,
+    pub tool: String,
+    pub environment: String,
+    pub parameters: serde_json::Value,
+    pub policy_hash: String,
+    pub evaluation_result: EvaluationResult,
+    pub evaluation_latency_us: f64,
+    pub decision_id: String,
+    pub trace_id: String,
+    pub execution_status: String,
+}
+
 impl EvaluationDecision {
     #[allow(dead_code)]
     pub fn is_deny(&self) -> bool {

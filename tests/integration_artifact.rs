@@ -1,9 +1,11 @@
 //! Integration tests for decision → artifact flow
 
 use traxes_demo::artifact::{AuditArtifact, ArtifactLogger};
-use traxes_demo::traxes_engine::{EvaluationDecision, Engine};
+use traxes_demo::traxes_engine::EvaluationDecision;
 use traxes_demo::action::ProposedAction;
 use traxes_demo::server_policy::EvaluationResult;
+use traxes_demo::execution_event::{ExecutionEvent, RuleTrace, ReplayMetadata, PerformanceMetrics};
+use traxes_demo::artifact_emitter::ArtifactEmitter;
 use std::fs;
 
 #[test]
@@ -321,4 +323,151 @@ fn test_artifact_side_effect_prevention() {
     
     // Verify side effect prevention info
     assert_eq!(artifact.side_effect_prevention.decision_effect, "DENY");
+}
+
+#[test]
+fn test_artifact_construction_identity() {
+    // Verify that async and sync artifact construction paths produce identical artifacts
+    // This is critical for the architectural invariant: single canonical artifact builder
+    
+    // Create evaluation context
+    let evaluation_result = EvaluationResult {
+        action: Some("DENY".to_string()),
+        field: "instance_cost_per_hour".to_string(),
+        rule: "numeric_lte".to_string(),
+        observed_value: 1.50,
+        observed_value_str: "1.50".to_string(),
+        policy_value: 2.00,
+        evaluation_expression: "instance_cost_per_hour numeric_lte 2.00".to_string(),
+        reason: "INFRA_COST_LIMIT_CHECK".to_string(),
+    };
+    
+    let decision = EvaluationDecision {
+        result: evaluation_result.clone(),
+        decision: "DENY".to_string(),
+        evaluation_latency_us: 150.0,
+    };
+    
+    let action = ProposedAction {
+        tool: "aws_ec2_provision".to_string(),
+        session_id: "test-session-identity".to_string(),
+        environment: "test".to_string(),
+        parameters: serde_json::json!({
+            "instance_cost_per_hour": 1.50,
+            "instance_type": "t3.medium"
+        }),
+    };
+    
+    let policy_hash = "test-policy-hash-12345";
+    let decision_id = "test-decision-identity";
+    
+    // Generate artifact via sync path (canonical builder)
+    let sync_artifact = ArtifactLogger::generate_artifact(
+        decision_id,
+        &action,
+        &decision,
+        policy_hash,
+        "blocked".to_string(),
+    );
+    
+    // Generate artifact via async path (simulate EventEmitter::event_to_artifact)
+    let rule_trace = RuleTrace {
+        rule_id: "infra-cost-limit".to_string(),
+        field: "instance_cost_per_hour".to_string(),
+        observed_value: "1.50".to_string(),
+        operator: "numeric_lte".to_string(),
+        violation: true,
+        evaluation_result: true,
+    };
+    
+    let replay_metadata = ReplayMetadata {
+        policy_hash: policy_hash.to_string(),
+        action_hash: "test-action-hash".to_string(),
+        engine_version: "0.3.2".to_string(),
+        sequence: 0,
+    };
+    
+    let performance = PerformanceMetrics {
+        evaluation_latency_us: 150,
+        decision_latency_us: 4,
+    };
+    
+    let event = ExecutionEvent::new(
+        decision_id.to_string(),
+        action.session_id.clone(),
+        decision_id.to_string(), // trace_id same as decision_id for test
+        action.tool.clone(),
+        action.environment.clone(),
+        decision.decision.clone(),
+        rule_trace,
+        replay_metadata,
+        performance,
+        "blocked".to_string(),
+        action.parameters.clone(),
+        decision.result.policy_value,
+        decision.result.reason.clone(),
+    );
+    
+    // Create artifact emitter and convert event to artifact
+    let (_tx, rx) = tokio::sync::mpsc::channel(100);
+    let emitter = ArtifactEmitter::new(rx, policy_hash.to_string());
+    let async_artifact = emitter.event_to_artifact(event)
+        .expect("Failed to convert event to artifact");
+    
+    // Verify artifacts are identical in all critical fields
+    assert_eq!(sync_artifact.decision, async_artifact.decision, "Decision mismatch");
+    assert_eq!(sync_artifact.sha256_hash, async_artifact.sha256_hash, "Hash mismatch");
+    assert_eq!(sync_artifact.policy_bundle, async_artifact.policy_bundle, "Policy bundle mismatch");
+    assert_eq!(sync_artifact.policy_hash, async_artifact.policy_hash, "Policy hash mismatch");
+    assert_eq!(sync_artifact.reason, async_artifact.reason, "Reason mismatch");
+    assert_eq!(sync_artifact.tool, async_artifact.tool, "Tool mismatch");
+    assert_eq!(sync_artifact.environment, async_artifact.environment, "Environment mismatch");
+    
+    // Verify parameters are identical
+    assert_eq!(
+        sync_artifact.proposed_action.parameters.instance_type,
+        async_artifact.proposed_action.parameters.instance_type,
+        "Instance type mismatch"
+    );
+    assert_eq!(
+        sync_artifact.proposed_action.parameters.instance_cost_per_hour,
+        async_artifact.proposed_action.parameters.instance_cost_per_hour,
+        "Instance cost mismatch"
+    );
+    
+    // Verify rule evaluation info
+    assert_eq!(
+        sync_artifact.rule_evaluation.rule_id,
+        async_artifact.rule_evaluation.rule_id,
+        "Rule ID mismatch"
+    );
+    assert_eq!(
+        sync_artifact.rule_evaluation.field,
+        async_artifact.rule_evaluation.field,
+        "Field mismatch"
+    );
+    assert_eq!(
+        sync_artifact.rule_evaluation.observed_value,
+        async_artifact.rule_evaluation.observed_value,
+        "Observed value mismatch"
+    );
+    
+    // Verify execution context
+    assert_eq!(
+        sync_artifact.execution_context.session_id,
+        async_artifact.execution_context.session_id,
+        "Session ID mismatch"
+    );
+    assert_eq!(
+        sync_artifact.execution_context.trace_id,
+        async_artifact.execution_context.trace_id,
+        "Trace ID mismatch"
+    );
+    
+    // Verify performance metrics (allow small variance in artifact_write_latency_us)
+    assert_eq!(
+        sync_artifact.performance.evaluation_latency_us,
+        async_artifact.performance.evaluation_latency_us,
+        "Evaluation latency mismatch"
+    );
 }

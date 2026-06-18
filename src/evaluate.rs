@@ -42,53 +42,51 @@ pub async fn run_evaluate_with_emitter(
     // Enforcement gate: execute action if ALLOW, block if DENY
     let execution_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
 
-    // Emit compact execution event instead of generating artifact directly
-    let rule_trace = crate::execution_event::RuleTrace {
-        rule_id: "infra-cost-limit".to_string(),
-        field: evaluation.result.field.clone(),
-        observed_value: evaluation.result.observed_value_str.clone(),
-        operator: evaluation.result.rule.clone(),
-        violation: evaluation.result.action.is_some(),
-        evaluation_result: evaluation.result.action.is_some(),
-    };
-
-    use sha2::Digest;
-    let action_hash = format!("{:x}", sha2::Sha256::digest(serde_json::to_string(&action).unwrap_or_default()));
-    let replay_metadata = crate::execution_event::ReplayMetadata {
+    // Emit lightweight decision record instead of full execution event
+    let decision_record = crate::traxes_engine::DecisionRecord {
+        decision: evaluation.decision.clone(),
+        session_id: action.session_id.clone(),
+        tool: action.tool.clone(),
+        environment: action.environment.clone(),
+        parameters: action.parameters.clone(),
         policy_hash: engine.policy_hash().to_string(),
-        action_hash,
-        engine_version: "0.3.2".to_string(),
-        sequence: 0,
+        evaluation_result: evaluation.result.clone(),
+        evaluation_latency_us: evaluation.evaluation_latency_us,
+        decision_id: decision_id.clone(),
+        trace_id: trace_id.clone(),
+        execution_status: execution_status.clone(),
     };
 
-    let performance = crate::execution_event::PerformanceMetrics {
-        evaluation_latency_us: evaluation.evaluation_latency_us as u64,
-        decision_latency_us: 4,
-    };
-
-    let environment = action.environment.clone();
-    
-    let event = crate::execution_event::ExecutionEvent::new(
-        decision_id.clone(),
-        action.session_id.clone(),
-        trace_id.clone(),
-        action.tool.clone(),
-        environment,
-        evaluation.decision.clone(),
-        rule_trace,
-        replay_metadata,
-        performance,
-        execution_status.clone(),
-    );
-
-    // Emit event to bounded queue (non-blocking)
-    match event_emitter.try_emit(event) {
+    // Emit decision record to bounded queue (non-blocking)
+    match event_emitter.try_emit_record(decision_record) {
         Ok(_) => {}
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Using synchronous fallback for {}", decision_id));
+            // Fallback to synchronous artifact generation to preserve Invariant #2
+            let artifact = ArtifactLogger::generate_artifact(
+                &decision_id,
+                &action,
+                &evaluation,
+                engine.policy_hash(),
+                execution_status.clone(),
+            );
+            if let Err(e) = ArtifactLogger::write_sync(&artifact) {
+                return Err(format!("Failed to write artifact (fallback): {}", e).into());
+            }
         }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Using synchronous fallback for {}", decision_id));
+            // Fallback to synchronous artifact generation to preserve Invariant #2
+            let artifact = ArtifactLogger::generate_artifact(
+                &decision_id,
+                &action,
+                &evaluation,
+                engine.policy_hash(),
+                execution_status.clone(),
+            );
+            if let Err(e) = ArtifactLogger::write_sync(&artifact) {
+                return Err(format!("Failed to write artifact (fallback): {}", e).into());
+            }
         }
     }
 

@@ -10,6 +10,7 @@
 pub mod action;
 pub mod artifact;
 pub mod artifact_emitter;
+pub mod async_logger;
 pub mod cli_utils;
 pub mod engine;
 pub mod evaluate;
@@ -47,5 +48,5 @@ pub fn alloc_snapshot() -> (usize, usize) {
 // Re-export commonly used types for convenience
 pub use action::ProposedAction;
 pub use artifact::{AuditArtifact, ArtifactLogger};
-pub use traxes_engine::{Engine, EvaluationDecision};
+pub use traxes_engine::{DecisionRecord, Engine, EvaluationDecision};
 pub use server_policy::{EvaluationResult, PolicyEvaluator, Rule};

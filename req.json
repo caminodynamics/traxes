@@ -1,0 +1,9 @@
+{
+  "session_id": "test-1",
+  "tool": "evaluate",
+  "environment": "staging",
+  "parameters": {
+    "action": "allow_test",
+    "instance_type": "t3.medium"
+  }
+}

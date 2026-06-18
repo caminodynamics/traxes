@@ -39,9 +39,16 @@ pub fn is_demo_fast() -> bool {
 }
 
 /// Log policy/debug messages only outside demo mode (or when --debug is set).
+/// This now uses async logging if available, falling back to stderr.
 pub fn debug_log(message: impl std::fmt::Display) {
     if !is_demo_mode() || is_debug_mode() {
-        eprintln!("{}", message);
+        // Try async logging first (non-blocking)
+        if let Some(async_logger) = crate::async_logger::get_global_async_logger() {
+            let _ = async_logger.try_debug(message.to_string());
+        } else {
+            // Fallback to stderr
+            eprintln!("{}", message);
+        }
     }
 }
 

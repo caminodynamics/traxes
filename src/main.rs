@@ -18,6 +18,7 @@ use axum::{
     Router,
 };
 use chrono::Utc;
+use crate::artifact::ArtifactLogger;
 use serde::Serialize;
 use serde_json;
 use std::env;
@@ -26,6 +27,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use uuid::Uuid;
+use traxes_demo::async_logger;
 
 fn write_artifact_on_exit<T: Serialize>(context: &T) {
     let json_result = serde_json::to_string_pretty(context);
@@ -243,21 +245,39 @@ async fn main() {
         }
         "server" => {
             // Server mode: initialize all server infrastructure here only
-            // Initialize event emitter with bounded queue (capacity: 1000 events)
-            let (event_emitter, event_rx) = artifact_emitter::create_event_channel(1000);
+            // Initialize async logging queue (capacity: 1000 log messages)
+            let (async_log_sender, async_log_rx) = async_logger::create_async_log_channel(1000);
+            async_logger::init_global_async_logger(async_log_sender);
             
-            // Spawn artifact emitter worker
+            // Spawn async logger worker
+            let async_logger_worker = async_logger::AsyncLogger::new(async_log_rx);
+            tokio::spawn(async_logger_worker.run());
+            
+            if !cli_utils::is_demo_mode() {
+                println!("[Traxes] Async logger initialized");
+            }
+            
+            // Initialize sharded event emitter (4 shards to reduce contention, total capacity: 1000)
+            let shard_count = 4;
+            let capacity_per_shard = 250;
+            let (event_emitter, event_receivers, event_counter) = artifact_emitter::create_sharded_event_channels(shard_count, capacity_per_shard);
+            
+            // Spawn artifact emitter workers (one per shard)
             let policy_hash = Engine::load_default_policies()
                 .expect("Failed to load default policy bundle")
                 .policy_hash()
                 .to_string();
             
-            let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash);
-            tokio::spawn(artifact_emitter.run());
+            for event_rx in event_receivers {
+                let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
+                tokio::spawn(async move {
+                    artifact_emitter.run().await;
+                });
+            }
 
             if !cli_utils::is_demo_mode() {
-                println!("[Traxes] Event emitter initialized with capacity: 1000");
-                println!("[Traxes] Artifact emitter worker spawned");
+                println!("[Traxes] Sharded event emitter initialized: {} shards, {} capacity per shard", shard_count, capacity_per_shard);
+                println!("[Traxes] Artifact emitter workers spawned: {}", shard_count);
             }
 
             let engine = Arc::new(
@@ -314,15 +334,29 @@ async fn main() {
                 std::process::exit(1);
             };
             
-            // Initialize event emitter for CLI evaluate mode
-            let (event_emitter, event_rx) = artifact_emitter::create_event_channel(100);
+            // Initialize async logging queue for CLI evaluate mode
+            let (async_log_sender, async_log_rx) = async_logger::create_async_log_channel(100);
+            async_logger::init_global_async_logger(async_log_sender);
             
-            // Spawn artifact emitter worker
+            // Spawn async logger worker
+            let async_logger_worker = async_logger::AsyncLogger::new(async_log_rx);
+            tokio::spawn(async_logger_worker.run());
+            
+            // Initialize sharded event emitter for CLI evaluate mode (2 shards for CLI, total capacity: 100)
+            let shard_count = 2;
+            let capacity_per_shard = 50;
+            let (event_emitter, event_receivers, event_counter) = artifact_emitter::create_sharded_event_channels(shard_count, capacity_per_shard);
+            
+            // Spawn artifact emitter workers (one per shard)
             let engine = Engine::load_default_policies().expect("Failed to load default policy bundle");
             let policy_hash = engine.policy_hash().to_string();
             
-            let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash);
-            tokio::spawn(artifact_emitter.run());
+            for event_rx in event_receivers {
+                let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
+                tokio::spawn(async move {
+                    artifact_emitter.run().await;
+                });
+            }
             
             // Run evaluation with event emitter
             match evaluate::run_evaluate_with_emitter(payload_path, event_emitter, &engine).await {
@@ -430,58 +464,65 @@ async fn evaluate_action(
         sleep(Duration::from_millis(100)).await;
     }
 
-    // Emit compact execution event instead of generating artifact directly
+    // Emit lightweight decision record instead of full execution event
     let event_start = Instant::now();
     
-    // Create rule trace from evaluation result
-    let rule_trace = execution_event::RuleTrace {
-        rule_id: "infra-cost-limit".to_string(),
-        field: evaluation.result.field.clone(),
-        observed_value: evaluation.result.observed_value_str.clone(),
-        operator: evaluation.result.rule.clone(),
-        violation: evaluation.result.action.is_some(),
-        evaluation_result: evaluation.result.action.is_some(),
-    };
-
-    // Create replay metadata
-    let replay_metadata = execution_event::ReplayMetadata {
+    // Create lightweight decision record for async artifact construction
+    let decision_record = crate::traxes_engine::DecisionRecord {
+        decision: evaluation.decision.clone(),
+        session_id: action.session_id.clone(),
+        tool: action.tool.clone(),
+        environment: action.environment.clone(),
+        parameters: action.parameters.clone(),
         policy_hash: state.engine.policy_hash().to_string(),
-        action_hash,
-        engine_version: "0.3.2".to_string(),
-        sequence: 0, // Will be assigned by emitter
+        evaluation_result: evaluation.result.clone(),
+        evaluation_latency_us: evaluation.evaluation_latency_us,
+        decision_id: decision_id.clone(),
+        trace_id: trace_id.clone(),
+        execution_status: execution_status.clone(),
     };
 
-    // Create performance metrics
-    let performance = execution_event::PerformanceMetrics {
-        evaluation_latency_us: evaluation.evaluation_latency_us as u64,
-        decision_latency_us: 4, // Fixed decision latency
-    };
-
-    // Create and emit execution event
-    let environment = action.environment.clone();
-    
-    let event = execution_event::ExecutionEvent::new(
-        decision_id.clone(),
-        action.session_id.clone(),
-        trace_id.clone(),
-        action.tool.clone(),
-        environment,
-        evaluation.decision.clone(),
-        rule_trace,
-        replay_metadata,
-        performance,
-        execution_status.clone(),
-    );
-
-    // Emit event to bounded queue (non-blocking)
+    // Emit decision record to bounded queue (non-blocking)
     let event_io_start = Instant::now();
-    match state.event_emitter.try_emit(event) {
+    match state.event_emitter.try_emit_record(decision_record) {
         Ok(_) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Using synchronous fallback for {}", decision_id));
+            // Fallback to synchronous artifact generation to preserve Invariant #2
+            let artifact = ArtifactLogger::generate_artifact(
+                &decision_id,
+                &action,
+                &evaluation,
+                state.engine.policy_hash(),
+                execution_status.clone(),
+            );
+            if let Err(e) = ArtifactLogger::write_sync(&artifact) {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ResponseJson(ErrorResponse {
+                        error: format!("Failed to write artifact (fallback): {}", e),
+                    })
+                ));
+            }
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Dropping event {}", decision_id));
+            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Using synchronous fallback for {}", decision_id));
+            // Fallback to synchronous artifact generation to preserve Invariant #2
+            let artifact = ArtifactLogger::generate_artifact(
+                &decision_id,
+                &action,
+                &evaluation,
+                state.engine.policy_hash(),
+                execution_status.clone(),
+            );
+            if let Err(e) = ArtifactLogger::write_sync(&artifact) {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ResponseJson(ErrorResponse {
+                        error: format!("Failed to write artifact (fallback): {}", e),
+                    })
+                ));
+            }
         }
     }
     let _event_io_time_us = event_io_start.elapsed().as_micros() as f64;

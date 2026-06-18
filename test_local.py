@@ -140,7 +140,7 @@ def main():
     tests = [
         test_payloads,
         test_python_syntax,
-        test_proxy_logic
+        test_engine_evaluation
     ]
     
     all_passed = True
