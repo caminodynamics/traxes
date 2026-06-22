@@ -10,6 +10,7 @@
 pub mod action;
 pub mod artifact;
 pub mod artifact_emitter;
+pub mod assets;
 pub mod async_logger;
 pub mod cli_utils;
 pub mod engine;

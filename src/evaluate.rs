@@ -21,12 +21,29 @@ pub async fn run_evaluate_with_emitter(
     event_emitter: crate::artifact_emitter::EventEmitter,
     engine: &crate::traxes_engine::Engine,
 ) -> Result<EvaluateResult, Box<dyn std::error::Error>> {
-    // Resolve payload path from CARGO_MANIFEST_DIR for consistent behavior
+    // Resolve payload path: absolute paths used as-is, relative paths resolved from current directory
     let resolved_path = if Path::new(&payload_path).is_absolute() {
         payload_path
     } else {
-        let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-        Path::new(cargo_manifest_dir).join(&payload_path).to_string_lossy().to_string()
+        // Try current directory first for release binary usage
+        let current_dir_path = std::env::current_dir()
+            .map(|d| d.join(&payload_path).to_string_lossy().to_string())
+            .ok();
+        
+        // If file exists in current directory, use it
+        if let Some(ref path) = current_dir_path {
+            if Path::new(path).exists() {
+                path.clone()
+            } else {
+                // Fall back to CARGO_MANIFEST_DIR for development builds
+                let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+                Path::new(cargo_manifest_dir).join(&payload_path).to_string_lossy().to_string()
+            }
+        } else {
+            // Fall back to CARGO_MANIFEST_DIR if current dir unavailable
+            let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+            Path::new(cargo_manifest_dir).join(&payload_path).to_string_lossy().to_string()
+        }
     };
 
     let payload_str = fs::read_to_string(&resolved_path)?;

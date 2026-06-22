@@ -1,27 +1,26 @@
 use std::thread;
 use std::time::Duration;
 use colored::Colorize;
+use traxes_demo::assets;
 
-fn print_proposed_action(path: &str) {
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            let tool = json.get("tool").and_then(|t| t.as_str()).unwrap_or("unknown");
-            let environment = json.get("environment").and_then(|e| e.as_str()).unwrap_or("unknown");
-            let parameters = json.get("parameters").and_then(|p| p.as_object());
-            let instance_type = parameters
-                .and_then(|p| p.get("instance_type"))
-                .and_then(|i| i.as_str())
-                .unwrap_or("unknown");
+fn print_proposed_action(payload_content: &str) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload_content) {
+        let tool = json.get("tool").and_then(|t| t.as_str()).unwrap_or("unknown");
+        let environment = json.get("environment").and_then(|e| e.as_str()).unwrap_or("unknown");
+        let parameters = json.get("parameters").and_then(|p| p.as_object());
+        let instance_type = parameters
+            .and_then(|p| p.get("instance_type"))
+            .and_then(|i| i.as_str())
+            .unwrap_or("unknown");
 
-            println!("Proposed Action");
-            println!();
-            println!("Create AWS RDS database");
-            println!();
-            println!("tool: {}", tool);
-            println!("environment: {}", environment);
-            println!("instance_type: {}", instance_type);
-            println!();
-        }
+        println!("Proposed Action");
+        println!();
+        println!("Create AWS RDS database");
+        println!();
+        println!("tool: {}", tool);
+        println!("environment: {}", environment);
+        println!("instance_type: {}", instance_type);
+        println!();
     }
 }
 
@@ -59,7 +58,7 @@ pub async fn run_async() {
     println!();
 
     // Show proposed action
-    print_proposed_action("../demo/payloads/allow_t3medium.json");
+    print_proposed_action(assets::ALLOW_PAYLOAD);
 
     // Pause 2000ms
     pause_if_not_fast(2000);
@@ -117,7 +116,7 @@ pub async fn run_async() {
     println!();
 
     // Show proposed action
-    print_proposed_action("../demo/payloads/deny_t3large.json");
+    print_proposed_action(assets::DENY_PAYLOAD);
 
     // Pause 2000ms
     pause_if_not_fast(2000);
