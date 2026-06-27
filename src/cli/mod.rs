@@ -15,7 +15,21 @@ pub async fn run() {
     }
 
     match args[1].as_str() {
-        "eval" => eval::run_async(&args[2..]).await,
+        "eval" => {
+            if args.len() < 3 {
+                eprintln!("Error: eval command requires a payload file");
+                eprintln!();
+                eprintln!("USAGE:");
+                eprintln!("  traxes-demo eval <payload-file>");
+                eprintln!();
+                eprintln!("EXAMPLES:");
+                eprintln!("  traxes-demo eval my_payload.json");
+                eprintln!("  traxes-demo eval allow  (use embedded allow example)");
+                eprintln!("  traxes-demo eval deny   (use embedded deny example)");
+                std::process::exit(1);
+            }
+            eval::run_async(&args[2..]).await;
+        }
         "artifacts" => artifacts::run(&args[2..]),
         "replay" => replay::run(&args[2..]),
         "status" => status::run(),

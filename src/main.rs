@@ -171,7 +171,8 @@ async fn main() {
     let raw_args: Vec<String> = env::args().collect();
     let explicit_demo_off = raw_args.iter().any(|a| a == "--demo-mode=false");
     let demo_fast = raw_args.iter().any(|a| a == "--demo-fast");
-    let (mut demo_mode, debug_mode, args): (bool, bool, Vec<String>) = cli_utils::parse_demo_flags(raw_args);
+    let dev_mode = raw_args.iter().any(|a| a == "--dev");
+    let (mut demo_mode, debug_mode, args): (bool, bool, Vec<String>) = cli_utils::parse_demo_flags(raw_args.iter().filter(|a| *a != "--dev").cloned().collect());
 
     if args.len() >= 2 && args[1] == "evaluate" && !explicit_demo_off {
         demo_mode = true;
@@ -181,20 +182,50 @@ async fn main() {
     cli_utils::set_demo_fast(demo_fast);
 
     if args.len() < 2 {
-        eprintln!("Usage: Traxes-demo <command> [--demo-mode] [--debug]");
-        eprintln!("Commands:");
-        eprintln!("  server    - Run the HTTP server (default)");
-        eprintln!("  evaluate  <payload-file> - Evaluate a payload file and exit");
-        eprintln!("  benchmark --iterations <N> --concurrency <N> --payload <file> - Run benchmark mode");
-        eprintln!("  show-latest-artifact [--raw] - Display the most recent artifact");
-        eprintln!("  eval      <allow|deny|file> - Quick evaluation (new CLI)");
-        eprintln!("  artifacts <list|last|show> - Artifact management (new CLI)");
-        eprintln!("  replay    <id> - Replay an artifact (new CLI)");
-        eprintln!("  status    - Show engine status (new CLI)");
-        eprintln!("Flags:");
-        eprintln!("  --demo-mode       Compact investor/demo terminal output (default for evaluate)");
-        eprintln!("  --demo-mode=false Legacy verbose output");
-        eprintln!("  --debug           Show payload expressions and policy debug logs");
+        if dev_mode {
+            eprintln!("Traxes Demo (Developer Mode)");
+            eprintln!();
+            eprintln!("Usage: traxes-demo <command> [options]");
+            eprintln!();
+            eprintln!("Public Commands:");
+            eprintln!("  demo       Run interactive demo with embedded examples");
+            eprintln!("  eval       <payload-file>  Evaluate a payload file");
+            eprintln!("  benchmark  Run performance benchmarks");
+            eprintln!();
+            eprintln!("Developer Commands:");
+            eprintln!("  server                Run HTTP server");
+            eprintln!("  evaluate              <payload-file>  Evaluate (legacy)");
+            eprintln!("  show-latest-artifact   Display most recent artifact");
+            eprintln!("  artifacts <list|last|show>  Artifact management");
+            eprintln!("  replay <id>           Replay an artifact");
+            eprintln!("  status                Show engine status");
+            eprintln!();
+            eprintln!("Flags:");
+            eprintln!("  --dev           Enable developer mode");
+            eprintln!("  --demo-mode     Compact terminal output");
+            eprintln!("  --demo-mode=false  Verbose output");
+            eprintln!("  --debug         Show debug logs");
+        } else {
+            eprintln!("Traxes v0.2 - Deterministic Pre-Execution Evaluation Engine");
+            eprintln!();
+            eprintln!("Traxes evaluates actions against policies before execution.");
+            eprintln!("Run the demo to see it in action, or evaluate your own payloads.");
+            eprintln!();
+            eprintln!("USAGE:");
+            eprintln!("  traxes-demo <command>");
+            eprintln!();
+            eprintln!("COMMANDS:");
+            eprintln!("  demo       Run interactive demo (no arguments required)");
+            eprintln!("  eval       <payload-file>  Evaluate a payload file");
+            eprintln!("  benchmark  Run performance benchmarks");
+            eprintln!();
+            eprintln!("EXAMPLES:");
+            eprintln!("  traxes-demo demo");
+            eprintln!("  traxes-demo eval my_payload.json");
+            eprintln!("  traxes-demo benchmark");
+            eprintln!();
+            eprintln!("For developer tools, use: traxes-demo --dev");
+        }
         let error_ctx = ErrorContext {
             error_type: "USAGE_ERROR".to_string(),
             message: "No command provided".to_string(),
@@ -213,6 +244,55 @@ async fn main() {
             cli::demo::run_async().await;
             return;
         }
+        "benchmark" => {
+            match evaluate::run_benchmark(&args) {
+                Ok(_) => {
+                    println!("Benchmark completed successfully");
+                }
+                Err(e) => {
+                    let error_message = if e.to_string().contains("cannot find the file") {
+                        "File not found".to_string()
+                    } else if e.to_string().contains("parse") {
+                        "Invalid payload format".to_string()
+                    } else {
+                        "System error".to_string()
+                    };
+                    eprintln!("error: {}", error_message);
+                    eprintln!("details: {:?}", e);
+                    let error_ctx = ErrorContext {
+                        error_type: "SYSTEM_ERROR".to_string(),
+                        message: error_message,
+                        timestamp: Utc::now().to_rfc3339(),
+                    };
+                    write_artifact_on_exit(&error_ctx);
+                    std::process::exit(1);
+                }
+            }
+        }
+        // Developer-only commands (require --dev flag)
+        "server" | "evaluate" | "show-latest-artifact" | "artifacts" | "replay" | "status" => {
+            if !dev_mode {
+                eprintln!("Error: '{}' is a developer command", args[1]);
+                eprintln!("Use 'traxes-demo --dev {}' to access developer tools", args[1]);
+                eprintln!();
+                eprintln!("For public commands, use: demo, eval, benchmark");
+                eprintln!("Run 'traxes-demo' for usage information");
+                std::process::exit(1);
+            }
+            // Fall through to developer command handling
+        }
+        _ => {
+            eprintln!("Error: Unknown command '{}'", args[1]);
+            eprintln!();
+            eprintln!("Available commands: demo, eval, benchmark");
+            eprintln!("Run 'traxes-demo' for usage information");
+            eprintln!("For developer tools, use: traxes-demo --dev");
+            std::process::exit(1);
+        }
+    }
+
+    // Developer command handling (only reached if --dev flag is set)
+    match args[1].as_str() {
         "artifacts" => {
             let subcommand = args.get(2).map(|s| s.as_str()).unwrap_or("list");
             match subcommand {
@@ -389,31 +469,6 @@ async fn main() {
                 }
             }
         }
-        "benchmark" => {
-            match evaluate::run_benchmark(&args) {
-                Ok(_) => {
-                    println!("Benchmark completed successfully");
-                }
-                Err(e) => {
-                    let error_message = if e.to_string().contains("cannot find the file") {
-                        "File not found".to_string()
-                    } else if e.to_string().contains("parse") {
-                        "Invalid payload format".to_string()
-                    } else {
-                        "System error".to_string()
-                    };
-                    eprintln!("error: {}", error_message);
-                    eprintln!("details: {:?}", e);
-                    let error_ctx = ErrorContext {
-                        error_type: "SYSTEM_ERROR".to_string(),
-                        message: error_message,
-                        timestamp: Utc::now().to_rfc3339(),
-                    };
-                    write_artifact_on_exit(&error_ctx);
-                    std::process::exit(1);
-                }
-            }
-        }
         "show-latest-artifact" => {
             let raw_mode = args.iter().any(|a| a == "--raw");
             match show_latest_artifact(raw_mode) {
@@ -425,12 +480,7 @@ async fn main() {
             }
         }
         _ => {
-            let error_ctx = ErrorContext {
-                error_type: "UNKNOWN_COMMAND".to_string(),
-                message: format!("Unknown command: {}", args[1]),
-                timestamp: Utc::now().to_rfc3339(),
-            };
-            write_artifact_on_exit(&error_ctx);
+            // Should not reach here due to earlier check
             std::process::exit(1);
         }
     }

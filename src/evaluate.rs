@@ -160,6 +160,7 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let mut concurrency = 1;
     let mut payload_path = "";
     let mut write_artifacts = false;
+    let mut use_embedded = false;
 
     let mut i = 2;
     while i < args.len() {
@@ -198,8 +199,10 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         }
     }
 
+    // Use embedded payload if no --payload provided
     if payload_path.is_empty() {
-        return Err("Missing required argument: --payload".into());
+        use_embedded = true;
+        payload_path = "embedded";
     }
 
     println!("🚀 Benchmark Mode");
@@ -210,14 +213,37 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     println!("Write artifacts: {}", write_artifacts);
     println!();
 
-    // Load payload ONCE from CARGO_MANIFEST_DIR
-    let resolved_path = if Path::new(payload_path).is_absolute() {
-        payload_path.to_string()
+    // Load payload ONCE from CARGO_MANIFEST_DIR or embedded
+    let payload_str = if use_embedded {
+        // Use embedded allow payload for benchmarking
+        // Write to temp file for compatibility with existing evaluation logic
+        let temp_path = std::env::current_dir()
+            .map(|d| d.join("temp_benchmark_payload.json").to_string_lossy().to_string())
+            .unwrap_or_else(|_| "temp_benchmark_payload.json".to_string());
+        let embedded_payload = r#"{
+  "session_id": "benchmark-001",
+  "request_id": "req-benchmark-001",
+  "tool": "AWS_RDS_PROVISION",
+  "environment": "staging",
+  "parameters": {
+    "resource": "db",
+    "instance_type": "t3.medium",
+    "instance_cost_per_hour": 0.04
+  }
+}"#;
+        std::fs::write(&temp_path, embedded_payload)?;
+        temp_path
     } else {
-        let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-        Path::new(cargo_manifest_dir).join(payload_path).to_string_lossy().to_string()
+        let resolved_path = if Path::new(payload_path).is_absolute() {
+            payload_path.to_string()
+        } else {
+            let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+            Path::new(cargo_manifest_dir).join(payload_path).to_string_lossy().to_string()
+        };
+        resolved_path
     };
-    let payload_str = fs::read_to_string(&resolved_path)?;
+
+    let payload_str = fs::read_to_string(&payload_str)?;
 
     let action: ProposedAction = serde_json::from_str(&payload_str)?;
 

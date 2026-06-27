@@ -1,0 +1,11 @@
+{
+  "session_id": "benchmark-001",
+  "request_id": "req-benchmark-001",
+  "tool": "AWS_RDS_PROVISION",
+  "environment": "staging",
+  "parameters": {
+    "resource": "db",
+    "instance_type": "t3.medium",
+    "instance_cost_per_hour": 0.04
+  }
+}
