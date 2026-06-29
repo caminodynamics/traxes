@@ -156,7 +156,7 @@ The demo runs embedded ALLOW and DENY examples with no external dependencies.
 
 ## Links
 
-- Releases: https://github.com/caminodynamics/traxes/releases/latest
+- Releases: https://github.com/caminodynamics/traxes/releases/tag/v0.1.1
 - Issues: https://github.com/caminodynamics/traxes/issues
 - Demo video: https://github.com/caminodynamics/traxes/releases/download/v0.1.0/bettertraxesvid.mp4
 
