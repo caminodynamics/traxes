@@ -135,18 +135,45 @@ Examples include AI agents, infrastructure automation, robotics, and safety-crit
 
 ## Quick Start
 
-```bash
-# Run the interactive demo (no arguments required)
-./traxes-demo demo
+### Windows (Prebuilt Release Binary)
 
-# Evaluate an included example payload
-./traxes-demo eval payloads/allow_db.json
+```powershell
+# Run the interactive demo (no arguments required)
+.\traxes-demo.exe demo
 
 # Run performance benchmarks
-./traxes-demo benchmark
+.\traxes-demo.exe benchmark
+```
+
+### Linux/macOS (Source Build)
+
+```bash
+# Build from source
+cargo build --release
+
+# Run the interactive demo (no arguments required)
+./target/release/traxes-demo demo
+
+# Run performance benchmarks
+./target/release/traxes-demo benchmark
 ```
 
 The demo runs embedded ALLOW and DENY examples with no external dependencies.
+
+The prebuilt release binary contains embedded demo assets and benchmark payloads. The `eval` command operates on user-supplied payload files and therefore requires either a repository checkout or your own payload file.
+
+## Evaluating Payload Files
+
+Example payloads are available after cloning the repository:
+
+```bash
+git clone https://github.com/caminodynamics/traxes
+cd traxes
+cargo build --release
+./target/release/traxes-demo eval payloads/allow_db.json
+```
+
+The `payloads/` directory contains example payloads for testing ALLOW and DENY scenarios.
 
 ## Requirements
 
