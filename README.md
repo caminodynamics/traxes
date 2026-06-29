@@ -71,7 +71,7 @@ The decision becomes a single deterministic evaluation with a replayable artifac
 
 ## Operational Guarantees
 
-Traxes provides three operational capabilities:
+Traxes provides three operational properties:
 
 **Auditability**: Every decision produces a deterministic artifact that captures the complete evaluation context. You can replay any decision to verify why an action was allowed or denied.
 
@@ -139,8 +139,8 @@ Examples include AI agents, infrastructure automation, robotics, and safety-crit
 # Run the interactive demo (no arguments required)
 ./traxes-demo demo
 
-# Evaluate your own payload file
-./traxes-demo eval my_payload.json
+# Evaluate an included example payload
+./traxes-demo eval payloads/allow_db.json
 
 # Run performance benchmarks
 ./traxes-demo benchmark
