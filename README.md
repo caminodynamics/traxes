@@ -1,6 +1,6 @@
 # Traxes
 
-Traxes is a deterministic execution gate for autonomous systems that evaluates proposed actions against versioned policies before execution and produces replayable, auditable decision artifacts.
+Traxes is a deterministic execution engine that evaluates proposed actions against versioned policies before execution and produces replayable decision artifacts.
 
 ## The Problem
 
@@ -102,24 +102,54 @@ Traxes operates at the boundary between decision-making and execution. It is typ
 
 ## Example Decisions
 
-**ALLOW**
+**Decision Artifact (runtime output)**
 
-```text
-instance_type: t3.medium
-policy_version: aws_staging_guardrails@v3
-decision: ALLOW
-artifact: /artifacts/8f3a.json
+```json
+{
+  "artifact_version": "1.0.0",
+  "artifact_type": "pre_execution_decision",
+  "decision_id": "dec_84b52d8256e3414f914f3047f2dd2cd0",
+  "timestamp": "2026-06-29T18:04:51.924457800+00:00",
+  "decision": "ALLOW",
+  "tool": "AWS_RDS_PROVISION",
+  "environment": "staging",
+  "policy_bundle": "infra-cost-limit-v1",
+  "policy_hash": "785e022b9921ee6a43ab5044cc8e4a67930c936a1a521f4479269e47eacc52e8",
+  "sha256_hash": "e3665d8564c753be7334b9e77c6585d2d4bbd5d74255619111d385b880bd62f0",
+  "engine": {
+    "name": "Traxes",
+    "engine_version": "0.3.2",
+    "policy_bundle_id": "infra-cost-limit-v1"
+  },
+  "proposed_action": {
+    "tool": "AWS_RDS_PROVISION",
+    "environment": "staging",
+    "parameters": {
+      "instance_type": "t3.micro",
+      "instance_cost_per_hour": 0.015
+    }
+  },
+  "rule_evaluation": {
+    "rule_id": "infra-cost-limit",
+    "field": "proposed_action.parameters.instance_type",
+    "observed_value": "t3.micro",
+    "operator": "infra-cost-limit",
+    "evaluation_expression": "proposed_action.parameters.instance_type not_in policy",
+    "evaluation_result": false
+  },
+  "performance": {
+    "evaluation_latency_us": 230.0,
+    "decision_latency_us": 4.8,
+    "artifact_write_latency_us": 41.7
+  },
+  "side_effect_prevention": {
+    "decision_effect": "ALLOW"
+  },
+  "execution_status": "executed"
+}
 ```
 
-**DENY**
-
-```text
-instance_type: m5.large
-policy_version: aws_staging_guardrails@v3
-decision: DENY
-reason: instance_type not permitted
-artifact: /artifacts/91bc.json
-```
+Artifacts are written to `artifacts/AuditArtifact_{decision_id}.json`.
 
 ## Why Traxes
 
@@ -160,11 +190,11 @@ cargo build --release
 
 The demo runs embedded ALLOW and DENY examples with no external dependencies.
 
-The prebuilt release binary contains embedded demo assets and benchmark payloads. The `eval` command operates on user-supplied payload files and therefore requires either a repository checkout or your own payload file.
+The prebuilt release binary contains embedded demo assets and benchmark payloads. The `eval` command operates on user-supplied CLI demo inputs and therefore requires either a repository checkout or your own input file.
 
-## Evaluating Payload Files
+## CLI Demo Evaluation Inputs
 
-Example payloads are available after cloning the repository:
+Example CLI demo inputs are available after cloning the repository:
 
 ```bash
 git clone https://github.com/caminodynamics/traxes
@@ -173,13 +203,13 @@ cargo build --release
 ./target/release/traxes-demo eval payloads/allow_db.json
 ```
 
-The `payloads/` directory contains example payloads for testing ALLOW and DENY scenarios.
+The `payloads/` directory contains example CLI demo inputs used to demonstrate ALLOW and DENY outcomes.
 
 ## Requirements
 
 - Prebuilt binaries available in GitHub Releases
 - Rust toolchain for source builds
-- Optional Docker support for containerized execution
+- Optional Docker support for reproducible CLI demo execution
 
 ## Links
 
@@ -189,6 +219,6 @@ The `payloads/` directory contains example payloads for testing ALLOW and DENY s
 
 ## Next step
 
-Run the demo, inspect the decision artifact, then adapt a policy to your own action schema.
+Run the demo, inspect the decision artifact, then modify the Rust policy definitions to evaluate your own action schema.
 
 ---
