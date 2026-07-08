@@ -1,5 +1,5 @@
-use crate::coverage::events::{CoverageEvent, CoverageEventType};
-use crate::coverage::registry::CoverageRegistry;
+use super::events::{CoverageEvent, CoverageEventType};
+use super::registry::CoverageRegistry;
 
 #[derive(Debug, Clone)]
 pub struct CoverageTracker {

@@ -67,6 +67,7 @@ mod artifact_emitter;
 mod artifact_index;
 mod cli;
 mod cli_utils;
+mod coverage;
 mod evaluate;
 mod execution_event;
 mod policy_bundle;

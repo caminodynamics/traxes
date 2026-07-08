@@ -1,4 +1,4 @@
-use crate::coverage::events::{CoverageEvent, CoverageEventType};
+use super::events::{CoverageEvent, CoverageEventType};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
