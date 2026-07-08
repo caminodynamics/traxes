@@ -8,6 +8,7 @@ use crate::action::ProposedAction;
 use crate::cli_utils;
 use crate::traxes_engine::EvaluationDecision;
 use crate::server_policy::EvaluationResult;
+use crate::coverage::{CoverageTracker, CoverageRegistry, CoverageEventType};
 
 const POLICY_BUNDLE: &str = "infra-cost-limit-v1";
 
@@ -26,11 +27,15 @@ pub struct AuditArtifact {
     pub policy_hash: String,
     pub sha256_hash: String,
     pub engine: EngineInfo,
+    pub policy_info: Option<PolicyInfo>,  // NEW: Policy metadata with version
     pub execution_context: ExecutionContext,
     pub proposed_action: ProposedActionInfo,
     pub rule_evaluation: RuleEvaluationInfo,
+    pub rules_evaluated: Option<Vec<RuleEvaluationInfo>>,  // NEW: Multi-rule support
     pub performance: PerformanceInfo,
     pub side_effect_prevention: SideEffectPreventionInfo,
+    pub governance_info: Option<GovernanceInfo>,  // NEW: Governance coverage
+    pub evaluation_trace: Option<EvaluationTrace>,  // NEW: Evaluation trace
     pub execution_status: String,
 }
 
@@ -39,6 +44,13 @@ pub struct EngineInfo {
     pub name: String,
     pub engine_version: String,
     pub policy_bundle_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PolicyInfo {
+    pub policy_id: String,
+    pub policy_version: String,
+    pub policy_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +72,7 @@ pub struct ActionParameters {
     pub instance_cost_per_hour: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleEvaluationInfo {
     pub rule_id: String,
     pub field: String,
@@ -69,6 +81,7 @@ pub struct RuleEvaluationInfo {
     pub policy_value: f64,
     pub evaluation_expression: String,
     pub evaluation_result: bool,
+    pub rule_order: Option<u32>,  // NEW: For multi-rule ordering
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,7 +96,72 @@ pub struct SideEffectPreventionInfo {
     pub decision_effect: String, // ALLOW | DENY | BLOCKED
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GovernanceInfo {
+    pub coverage_status: String,  // "GOVERNED" | "UNGOVERNED" | "PARTIALLY_GOVERNED"
+    pub endpoint: String,
+    pub enforcement_hit: bool,
+    pub coverage_event_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EvaluationTrace {
+    pub steps: Vec<EvaluationStep>,
+    pub total_evaluation_time_us: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EvaluationStep {
+    pub step_name: String,           // "policy_loaded" | "rule_evaluated" | "decision_produced"
+    pub step_order: u32,
+    pub step_result: String,         // "SUCCESS" | "FAILURE"
+    pub step_duration_us: f64,
+    pub step_details: Option<String>, // Optional context
+}
+
 impl AuditArtifact {
+    /// Create governance info from coverage tracking
+    fn create_governance_info(action: &ProposedAction) -> Option<GovernanceInfo> {
+        let registry = CoverageRegistry::new();
+        let tracker = CoverageTracker::new(registry);
+        
+        // Register the endpoint if not already registered
+        let endpoint = format!("{}::{}", action.tool, action.environment);
+        tracker.register_endpoint(endpoint.clone(), true);
+        
+        // Track the request
+        let event = tracker.track_request(
+            action.tool.clone(),
+            endpoint.clone(),
+            None,  // No decision_id yet
+            true,  // Assume enforcement hit for now
+        );
+        
+        Some(GovernanceInfo {
+            coverage_status: if event.event_type == CoverageEventType::EnforcedPath {
+                "GOVERNED".to_string()
+            } else {
+                "UNGOVERNED".to_string()
+            },
+            endpoint,
+            enforcement_hit: event.event_type == CoverageEventType::EnforcedPath,
+            coverage_event_type: Some(format!("{:?}", event.event_type)),
+        })
+    }
+
+    /// Create multi-rule evaluation collection from single rule
+    /// This maintains backward compatibility while enabling multi-rule support
+    fn create_rules_evaluated(rule_evaluation: &RuleEvaluationInfo) -> Option<Vec<RuleEvaluationInfo>> {
+        Some(vec![rule_evaluation.clone()])
+    }
+
+    /// Create evaluation trace (optional, not enabled by default)
+    fn create_evaluation_trace(_evaluation_latency_us: f64) -> Option<EvaluationTrace> {
+        // Only create trace if feature flag is enabled (not implemented yet)
+        // For now, return None to keep traces disabled by default
+        None
+    }
+
     fn calculate_sha256_hash(
         decision_id: &str,
         action: &ProposedAction,
@@ -152,8 +230,42 @@ impl AuditArtifact {
         let env = action.environment.clone();
         let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
         let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        
+        // NEW: Create PolicyInfo with version
+        let policy_info = Some(PolicyInfo {
+            policy_id: POLICY_BUNDLE.to_string(),
+            policy_version: "1.0.0".to_string(),
+            policy_hash: policy_hash.clone(),
+        });
+        
+        // NEW: Create governance info from coverage tracking
+        let governance_info = Self::create_governance_info(action);
+        
+        // Create rule evaluation info
+        let rule_evaluation = RuleEvaluationInfo {
+            rule_id: "infra-cost-limit".to_string(),
+            field: evaluation_result.field.clone(),
+            // For instance_type fields, use string value; for numeric fields, use numeric value
+            observed_value: if evaluation_result.field.contains("instance_type") {
+                serde_json::Value::String(evaluation_result.observed_value_str.clone())
+            } else {
+                serde_json::Value::Number(serde_json::Number::from_f64(evaluation_result.observed_value).unwrap_or(serde_json::Number::from(0)))
+            },
+            operator: evaluation_result.rule.clone(),
+            policy_value: evaluation_result.policy_value,
+            evaluation_expression,
+            evaluation_result: evaluation_result.action.is_some(), // True if rule was violated (action returned)
+            rule_order: Some(0),  // NEW: Single rule has order 0
+        };
+        
+        // NEW: Create rules_evaluated collection for multi-rule support
+        let rules_evaluated = Self::create_rules_evaluated(&rule_evaluation);
+        
+        // NEW: Create evaluation trace (disabled by default)
+        let evaluation_trace = Self::create_evaluation_trace(evaluation_latency_us);
+        
         Self {
-            artifact_version: "1.0.0".to_string(),
+            artifact_version: "2.0.0".to_string(),  // Updated version
             artifact_type: "pre_execution_decision".to_string(),
             decision_id: decision_id.to_string(),
             timestamp: Utc::now().to_rfc3339(),
@@ -169,6 +281,7 @@ impl AuditArtifact {
                 engine_version: "0.3.2".to_string(),
                 policy_bundle_id: POLICY_BUNDLE.to_string(),
             },
+            policy_info,  // NEW: Policy metadata
             execution_context: ExecutionContext {
                 session_id: action.session_id.clone(),
                 trace_id: decision_id.to_string(), // Use decision_id as trace_id for now to ensure uniqueness
@@ -181,20 +294,8 @@ impl AuditArtifact {
                     instance_cost_per_hour: cost_per_hour,
                 },
             },
-            rule_evaluation: RuleEvaluationInfo {
-                rule_id: "infra-cost-limit".to_string(),
-                field: evaluation_result.field.clone(),
-                // For instance_type fields, use string value; for numeric fields, use numeric value
-                observed_value: if evaluation_result.field.contains("instance_type") {
-                    serde_json::Value::String(evaluation_result.observed_value_str.clone())
-                } else {
-                    serde_json::Value::Number(serde_json::Number::from_f64(evaluation_result.observed_value).unwrap_or(serde_json::Number::from(0)))
-                },
-                operator: evaluation_result.rule.clone(),
-                policy_value: evaluation_result.policy_value,
-                evaluation_expression,
-                evaluation_result: evaluation_result.action.is_some(), // True if rule was violated (action returned)
-            },
+            rule_evaluation,
+            rules_evaluated,  // NEW: Multi-rule collection
             performance: PerformanceInfo {
                 evaluation_latency_us,
                 decision_latency_us,
@@ -203,6 +304,8 @@ impl AuditArtifact {
             side_effect_prevention: SideEffectPreventionInfo {
                 decision_effect: normalized_decision.to_string(),
             },
+            governance_info,  // NEW: Governance info from coverage tracking
+            evaluation_trace,  // NEW: Optional evaluation trace
             execution_status,
         }
     }

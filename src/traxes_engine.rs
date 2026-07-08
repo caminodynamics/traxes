@@ -66,6 +66,16 @@ impl Engine {
         })
     }
 
+    pub fn with_policy(policy_yaml: String) -> Self {
+        let policy_hash = calculate_hash_from_content(&policy_yaml);
+        Self {
+            bundle: PolicyBundle {
+                policy_yaml,
+                policy_hash,
+            },
+        }
+    }
+
     pub fn evaluate(&self, action: &ProposedAction) -> EvaluationDecision {
         let start = Instant::now();
         let result = evaluate_action_policy(action, &self.bundle.policy_yaml);
