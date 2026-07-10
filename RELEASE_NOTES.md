@@ -27,7 +27,7 @@ TRAXES v1 is a deterministic pre-execution evaluation engine that evaluates prop
 ### Governance Coverage Status
 - **Coverage status**: GOVERNED/UNGOVERNED classification for endpoint coverage
 - **Endpoint identification**: Tool and environment endpoint tracking
-- **Enforcement hit tracking**: Records when policies actively enforce decisions
+- **Policy match tracking**: Records when policy rules actively matched the action evaluation
 - **Coverage event types**: EnforcedPath, UngovernedPath, and other coverage events
 
 ### Replay Verification

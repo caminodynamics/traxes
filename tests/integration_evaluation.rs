@@ -4,11 +4,15 @@ use traxes_demo::traxes_engine::Engine;
 use traxes_demo::action::ProposedAction;
 use std::fs;
 
+fn load_policy(path: &str) -> Engine {
+    let policy_yaml = fs::read_to_string(path).expect("Failed to load policy");
+    Engine::with_policy(policy_yaml)
+}
+
 #[test]
 fn test_numeric_lte_complete_flow_allow() {
     // Load engine with numeric_lte policy
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml");
     
     // Load payload with cost above threshold (should ALLOW)
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/numeric_lte_allow.json")
@@ -32,8 +36,7 @@ fn test_numeric_lte_complete_flow_allow() {
 #[test]
 fn test_numeric_lte_complete_flow_deny() {
     // Load engine with numeric_lte policy
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml");
     
     // Load payload with cost below threshold (should DENY)
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/numeric_lte_deny.json")
@@ -55,8 +58,7 @@ fn test_numeric_lte_complete_flow_deny() {
 #[test]
 fn test_in_list_complete_flow_deny() {
     // Load engine with in_list policy
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_in_list.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_in_list.yaml");
     
     // Load payload with instance_type in list (should DENY)
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/in_list_deny.json")
@@ -79,8 +81,7 @@ fn test_in_list_complete_flow_deny() {
 #[test]
 fn test_in_list_complete_flow_allow() {
     // Load engine with in_list policy
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_in_list.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_in_list.yaml");
     
     // Load payload with instance_type not in list (should ALLOW)
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/in_list_allow.json")
@@ -102,8 +103,7 @@ fn test_in_list_complete_flow_allow() {
 #[test]
 fn test_not_in_complete_flow_deny() {
     // Load engine with not_in policy
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_not_in.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_not_in.yaml");
     
     // Load payload with instance_type not in allowed list (should DENY)
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/not_in_deny.json")
@@ -125,8 +125,7 @@ fn test_not_in_complete_flow_deny() {
 #[test]
 fn test_not_in_complete_flow_allow() {
     // Load engine with not_in policy
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_not_in.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_not_in.yaml");
     
     // Load payload with instance_type in allowed list (should ALLOW)
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/not_in_allow.json")
@@ -148,10 +147,8 @@ fn test_not_in_complete_flow_allow() {
 #[test]
 fn test_policy_hash_consistency() {
     // Load same policy twice and verify hash consistency
-    let engine1 = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
-        .expect("Failed to load policy");
-    let engine2 = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
-        .expect("Failed to load policy");
+    let engine1 = load_policy("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml");
+    let engine2 = load_policy("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml");
     
     assert_eq!(engine1.policy_hash(), engine2.policy_hash());
     
@@ -162,8 +159,7 @@ fn test_policy_hash_consistency() {
 #[test]
 fn test_evaluation_latency_measurement() {
     // Load engine
-    let engine = Engine::load("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml")
-        .expect("Failed to load policy");
+    let engine = load_policy("../tests/fixtures/test_fixtures/policies/test_numeric_lte.yaml");
     
     // Load payload
     let payload_str = fs::read_to_string("../tests/fixtures/test_fixtures/payloads/numeric_lte_allow.json")

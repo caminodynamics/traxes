@@ -7,6 +7,7 @@ use traxes_demo::server_policy::EvaluationResult;
 use traxes_demo::execution_event::{ExecutionEvent, RuleTrace, ReplayMetadata, PerformanceMetrics};
 use traxes_demo::artifact_emitter::ArtifactEmitter;
 use std::fs;
+use std::sync::{Arc, atomic::AtomicU64};
 
 #[test]
 fn test_allow_decision_artifact_generation() {
@@ -46,7 +47,7 @@ fn test_allow_decision_artifact_generation() {
     assert_eq!(artifact.tool, "aws_ec2_provision");
     assert_eq!(artifact.environment, "test");
     assert_eq!(artifact.artifact_type, "pre_execution_decision");
-    assert_eq!(artifact.artifact_version, "1.0.0");
+    assert_eq!(artifact.artifact_version, "2.0.0");
     
     // For ALLOW decisions, reason should be empty
     assert!(artifact.reason.is_empty());
@@ -410,7 +411,7 @@ fn test_artifact_construction_identity() {
     
     // Create artifact emitter and convert event to artifact
     let (_tx, rx) = tokio::sync::mpsc::channel(100);
-    let emitter = ArtifactEmitter::new(rx, policy_hash.to_string());
+    let emitter = ArtifactEmitter::new(rx, policy_hash.to_string(), Arc::new(AtomicU64::new(0)));
     let async_artifact = emitter.event_to_artifact(event)
         .expect("Failed to convert event to artifact");
     
