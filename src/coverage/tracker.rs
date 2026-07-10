@@ -1,5 +1,6 @@
 use super::events::{CoverageEvent, CoverageEventType};
 use super::registry::CoverageRegistry;
+use super::{CoverageRecord, CoverageStatus, CoveragePolicyConfig};
 
 #[derive(Debug, Clone)]
 pub struct CoverageTracker {
@@ -37,6 +38,36 @@ impl CoverageTracker {
 
     pub fn get_registry(&self) -> &CoverageRegistry {
         &self.registry
+    }
+
+    pub fn record_coverage(
+        &self,
+        action_tool: String,
+        decision_id: Option<String>,
+        policy: &CoveragePolicyConfig,
+    ) -> Result<CoverageRecord, Box<dyn std::error::Error>> {
+        let requires_traxes = super::policy::tool_requires_traxes(&action_tool, policy);
+        
+        let (expected_control_path, observed_control_path, coverage_status) = if requires_traxes {
+            if decision_id.is_some() {
+                ("traxes".to_string(), "traxes".to_string(), CoverageStatus::GOVERNED)
+            } else {
+                ("traxes".to_string(), "direct".to_string(), CoverageStatus::UNGOVERNED)
+            }
+        } else {
+            ("none".to_string(), "direct".to_string(), CoverageStatus::UNKNOWN)
+        };
+        
+        let record = CoverageRecord::new(
+            action_tool,
+            expected_control_path,
+            observed_control_path,
+            coverage_status,
+            decision_id,
+        );
+        
+        record.write_to_file()?;
+        Ok(record)
     }
 }
 

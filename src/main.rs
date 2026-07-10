@@ -76,9 +76,10 @@ mod server_policy;
 
 mod cli_layer;
 
-use action::ProposedAction;
-use artifact_emitter::{ArtifactEmitter, EventEmitter};
-use traxes_engine::Engine;
+use crate::action::ProposedAction;
+use crate::artifact_emitter::{ArtifactEmitter, EventEmitter};
+use crate::traxes_engine::Engine;
+use crate::coverage::{CoverageTracker, load_coverage_policy};
 
 fn show_latest_artifact(raw_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
     let artifacts_dir = std::path::Path::new("artifacts");
@@ -200,6 +201,9 @@ async fn main() {
             eprintln!("  artifacts <list|last|show>  Artifact management");
             eprintln!("  replay <id>           Replay an artifact");
             eprintln!("  status                Show engine status");
+            eprintln!("  coverage <summary|list|show>  Coverage tracking");
+            eprintln!("  load-test             Run production-style load tests");
+            eprintln!("  reliability           Run reliability test suite");
             eprintln!();
             eprintln!("Flags:");
             eprintln!("  --dev           Enable developer mode");
@@ -271,7 +275,7 @@ async fn main() {
             }
         }
         // Developer-only commands (require --dev flag)
-        "server" | "evaluate" | "show-latest-artifact" | "artifacts" | "replay" | "status" => {
+        "server" | "evaluate" | "show-latest-artifact" | "artifacts" | "replay" | "status" | "coverage" | "load-test" | "reliability" => {
             if !dev_mode {
                 eprintln!("Error: '{}' is a developer command", args[1]);
                 eprintln!("Use 'traxes-demo --dev {}' to access developer tools", args[1]);
@@ -317,11 +321,29 @@ async fn main() {
             }
         }
         "replay" => {
-            cli_layer::run().await;
+            let replay_id = args.get(2).map(|s| s.as_str()).unwrap_or("");
+            if replay_id.is_empty() {
+                eprintln!("Error: replay command requires an artifact ID");
+                eprintln!("Usage: traxes-demo --dev replay <artifact_id>");
+                std::process::exit(1);
+            }
+            cli::replay::run(&args[2..]);
             return;
         }
         "status" => {
             cli_layer::run().await;
+            return;
+        }
+        "coverage" => {
+            cli::coverage::run(&args[2..]);
+            return;
+        }
+        "load-test" => {
+            cli::load_test::run(&args[2..]);
+            return;
+        }
+        "reliability" => {
+            cli::reliability::run(&args[2..]);
             return;
         }
         "server" => {
@@ -577,6 +599,20 @@ async fn evaluate_action(
         }
     }
     let _event_io_time_us = event_io_start.elapsed().as_micros() as f64;
+
+    // Record coverage after artifact emission
+    let coverage_policy = load_coverage_policy().unwrap_or_else(|_| {
+        crate::coverage::CoveragePolicyConfig { tools: std::collections::HashMap::new() }
+    });
+
+    let coverage_tracker = CoverageTracker::default();
+    if let Err(e) = coverage_tracker.record_coverage(
+        action.tool.clone(),
+        Some(decision_id.clone()),
+        &coverage_policy,
+    ) {
+        cli_utils::debug_log(format!("[Coverage] Failed to record coverage: {}", e));
+    }
 
     let artifact_path = format!("artifacts/AuditArtifact_{}.json", decision_id);
     let hash_generation_time_us = event_start.elapsed().as_micros() as f64;

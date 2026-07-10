@@ -1,0 +1,11 @@
+# Coverage Policy v0
+# Tools that require TRAXES evaluation for governance coverage
+
+AWS_RDS_PROVISION:
+  requires_traxes: true
+
+AWS_S3_CREATE_BUCKET:
+  requires_traxes: true
+
+AWS_EC2_PROVISION:
+  requires_traxes: true

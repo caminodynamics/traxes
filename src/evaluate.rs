@@ -4,6 +4,7 @@ use crate::action::ProposedAction;
 use crate::artifact::ArtifactLogger;
 use crate::cli_utils;
 use crate::traxes_engine::Engine;
+use crate::coverage::{CoverageTracker, load_coverage_policy};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -105,6 +106,20 @@ pub async fn run_evaluate_with_emitter(
                 return Err(format!("Failed to write artifact (fallback): {}", e).into());
             }
         }
+    }
+
+    // Record coverage after artifact emission
+    let coverage_policy = load_coverage_policy().unwrap_or_else(|_| {
+        crate::coverage::CoveragePolicyConfig { tools: std::collections::HashMap::new() }
+    });
+
+    let coverage_tracker = CoverageTracker::default();
+    if let Err(e) = coverage_tracker.record_coverage(
+        action.tool.clone(),
+        Some(decision_id.clone()),
+        &coverage_policy,
+    ) {
+        cli_utils::debug_log(format!("[Coverage] Failed to record coverage: {}", e));
     }
 
     let artifact_path = format!("artifacts/AuditArtifact_{}.json", decision_id);

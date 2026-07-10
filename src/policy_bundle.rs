@@ -3,6 +3,7 @@
 use crate::action::ProposedAction;
 use crate::cli_utils;
 use crate::server_policy::{EvaluationResult, PolicyEvaluator, Rule};
+use crate::traxes_engine::ParsedRule;
 use serde_yaml::Value as YamlValue;
 use std::io;
 
@@ -51,6 +52,66 @@ pub fn evaluate_action_policy(action: &ProposedAction, policy_yaml: &str) -> Eva
     missing_threshold_result(action)
 }
 
+/// Parse policy rules from YAML during engine initialization
+pub fn parse_policy_rules(policy_yaml: &str) -> Vec<ParsedRule> {
+    let mut rules = Vec::new();
+    
+    // Try to find list rules from YAML
+    if let Some((op, values, field)) = find_list_rule_from_yaml(policy_yaml) {
+        rules.push(ParsedRule {
+            operator: op,
+            field,
+            allowed_values: values,
+            rule_id: "instance_type_constraint".to_string(),
+        });
+    }
+    
+    // Try to find numeric threshold rules
+    if let Some(threshold) = find_numeric_lte_threshold(policy_yaml) {
+        // Convert numeric threshold to a rule representation
+        // For numeric rules, we store the threshold in allowed_values as a single-element vector
+        rules.push(ParsedRule {
+            operator: "numeric_lte".to_string(),
+            field: "instance_cost_per_hour".to_string(),
+            allowed_values: vec![threshold],
+            rule_id: "numeric_lte".to_string(),
+        });
+    }
+    
+    rules
+}
+
+/// Evaluate action using pre-parsed rules (hot path)
+pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: &[ParsedRule]) -> EvaluationResult {
+    let evaluator = PolicyEvaluator::new();
+    
+    // Try numeric_lte rules first
+    for rule in parsed_rules {
+        if rule.operator == "numeric_lte" {
+            if let Some(threshold) = rule.allowed_values.first() {
+                return evaluate_numeric_lte(action, &evaluator, threshold);
+            }
+        }
+    }
+    
+    // Try list rules (not_in, in_list)
+    for rule in parsed_rules {
+        if rule.operator == "not_in" || rule.operator == "in_list" {
+            return evaluate_list_rule(
+                action,
+                &evaluator,
+                &rule.operator,
+                &rule.allowed_values,
+                &rule.field,
+                &rule.rule_id,
+            );
+        }
+    }
+    
+    cli_utils::debug_log("[Traxes] No matching rules found; failing closed.");
+    missing_threshold_result(action)
+}
+
 fn evaluate_numeric_lte(
     action: &ProposedAction,
     evaluator: &PolicyEvaluator,
@@ -95,19 +156,14 @@ fn evaluate_list_rule(
     };
 
     let action_result = evaluator.evaluate(action, &rule);
-    // Fix: Extract the actual field value being evaluated (instance_type), not cost_per_hour
+    // Extract the actual field value being evaluated (instance_type), not cost_per_hour
     let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
     let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
     
-    // Use appropriate value based on field type - CRITICAL FIX
+    // Return raw observed values - hashing moved to artifact generation phase
     let (observed_value, observed_value_str) = if field == "instance_type" || field.contains("instance_type") {
-        // For instance_type field, use a hash of the string value for observed_value (f64)
-        // This prevents cross-field contamination while maintaining type compatibility
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        instance_type.hash(&mut hasher);
-        let hash = hasher.finish();
-        (hash as f64, instance_type.to_string())
+        // For instance_type field, return 0.0 as placeholder (hash computed in artifact.rs)
+        (0.0, instance_type.to_string())
     } else {
         (cost_per_hour, cost_per_hour.to_string())
     };

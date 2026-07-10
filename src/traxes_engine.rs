@@ -2,7 +2,7 @@
 
 use crate::action::ProposedAction;
 use crate::cli_utils;
-use crate::policy_bundle::evaluate_action_policy;
+use crate::policy_bundle::{evaluate_action_policy_with_rules, parse_policy_rules};
 use crate::server_policy::EvaluationResult;
 use sha2::{Digest, Sha256};
 use std::io;
@@ -11,9 +11,29 @@ use std::time::Instant;
 pub const DEFAULT_POLICY_YAML: &str = include_str!("../policies/aws_staging_guardrails.yaml");
 
 #[derive(Debug, Clone)]
+pub struct ParsedRule {
+    pub operator: String,
+    pub field: String,
+    pub allowed_values: Vec<String>,
+    pub rule_id: String,
+}
+
+impl ParsedRule {
+    pub fn new(operator: String, field: String, allowed_values: Vec<String>, rule_id: String) -> Self {
+        Self {
+            operator,
+            field,
+            allowed_values,
+            rule_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PolicyBundle {
     pub policy_yaml: String,
     pub policy_hash: String,
+    pub parsed_rules: Vec<ParsedRule>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,28 +77,33 @@ impl Engine {
         eprintln!("[Traxes] Loading embedded policy (compile-time)");
         let policy_yaml = DEFAULT_POLICY_YAML.to_string();
         let policy_hash = calculate_hash_from_content(&policy_yaml);
+        let parsed_rules = crate::policy_bundle::parse_policy_rules(&policy_yaml);
         eprintln!("[Traxes] Policy loaded successfully. Hash: {}", policy_hash);
+        eprintln!("[Traxes] Parsed {} rules from policy", parsed_rules.len());
         Ok(Self {
             bundle: PolicyBundle {
                 policy_yaml,
                 policy_hash,
+                parsed_rules,
             },
         })
     }
 
     pub fn with_policy(policy_yaml: String) -> Self {
         let policy_hash = calculate_hash_from_content(&policy_yaml);
+        let parsed_rules = crate::policy_bundle::parse_policy_rules(&policy_yaml);
         Self {
             bundle: PolicyBundle {
                 policy_yaml,
                 policy_hash,
+                parsed_rules,
             },
         }
     }
 
     pub fn evaluate(&self, action: &ProposedAction) -> EvaluationDecision {
         let start = Instant::now();
-        let result = evaluate_action_policy(action, &self.bundle.policy_yaml);
+        let result = evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules);
         let evaluation_latency_us = start.elapsed().as_micros() as f64;
         let (decision, _): (&str, String) = cli_utils::normalize_decision(&result);
         EvaluationDecision {
@@ -91,7 +116,7 @@ impl Engine {
     /// Raw evaluation that directly calls evaluate_action_policy without any overhead.
     /// This is used for benchmarking to measure only the core evaluation logic.
     pub fn evaluate_raw(&self, action: &ProposedAction) -> EvaluationResult {
-        evaluate_action_policy(action, &self.bundle.policy_yaml)
+        evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules)
     }
 
     pub fn policy_hash(&self) -> &str {

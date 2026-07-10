@@ -46,6 +46,9 @@ impl ReplayEngine {
     }
 
     pub fn replay_from_artifact(&self, artifact: &AuditArtifact) -> ReplayResult {
+        // Verify policy hash consistency before replay
+        let policy_hash_matches = self.verify_policy_consistency(artifact);
+        
         // Reconstruct the ProposedAction from artifact data
         let action = self.reconstruct_action(artifact);
 
@@ -53,7 +56,7 @@ impl ReplayEngine {
         let replay_decision = self.engine.evaluate(&action);
 
         // Compare with original decision
-        let match_status = artifact.decision == replay_decision.decision;
+        let match_status = policy_hash_matches && (artifact.decision == replay_decision.decision);
 
         // Extract evaluation details
         let evaluation_details = EvaluationDetails {

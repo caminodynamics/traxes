@@ -39,6 +39,7 @@ benchmark_results.json
 # Generated artifacts / dumps
 ############################################
 artifacts/
+coverage/
 *.jsonl
 *.dump
 *.zip

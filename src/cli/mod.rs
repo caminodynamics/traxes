@@ -3,6 +3,9 @@ pub mod artifacts;
 pub mod replay;
 pub mod status;
 pub mod demo;
+pub mod coverage;
+pub mod load_test;
+pub mod reliability;
 
 use std::env;
 

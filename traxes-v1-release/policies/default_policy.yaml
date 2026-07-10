@@ -1,0 +1,17 @@
+name: default_policy
+apiVersion: Traxes.dev/v1
+kind: ExecutionPolicy
+metadata:
+  name: infra-cost-control
+  environment: staging
+target:
+  tool: AWS_RDS_PROVISION
+rules:
+  - name: deny_expensive_instances
+    condition: payload.proposed_action.parameters.instance_type not in ["t3.micro", "t3.small", "t3.medium"]
+    action: DENY
+    reason: "Instance type exceeds staging environment cost limits."
+  - name: numeric_lte
+    condition: payload.proposed_action.parameters.instance_cost_per_hour <= 0.5
+    action: ALLOW
+    reason: "Instance cost within acceptable limits."

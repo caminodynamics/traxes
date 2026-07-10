@@ -1,4 +1,5 @@
-use crate::coverage::{compute_coverage, CoverageEventType, CoverageRegistry, CoverageTracker};
+use crate::coverage::{compute_coverage, CoverageEventType, CoverageRegistry, CoverageTracker, CoverageStatus, load_coverage_policy_from_path};
+use std::fs;
 
 #[test]
 fn test_full_coverage_workflow() {
@@ -296,4 +297,53 @@ fn test_registry_thread_safety() {
     }
 
     assert_eq!(registry.get_endpoint_count(), 10);
+}
+
+#[test]
+fn test_coverage_recording_workflow() {
+    // Create temporary policy
+    let policy_content = r#"
+AWS_RDS_PROVISION:
+  requires_traxes: true
+"#;
+    fs::write("test_integration_policy.yaml", policy_content).unwrap();
+    
+    let policy = load_coverage_policy_from_path("test_integration_policy.yaml").unwrap();
+    let tracker = CoverageTracker::default();
+    
+    // Test governed action
+    let record = tracker.record_coverage(
+        "AWS_RDS_PROVISION".to_string(),
+        Some("dec_123".to_string()),
+        &policy,
+    ).unwrap();
+    
+    assert!(matches!(record.coverage_status, CoverageStatus::GOVERNED));
+    assert_eq!(record.expected_control_path, "traxes");
+    assert_eq!(record.observed_control_path, "traxes");
+    
+    // Test ungoverned action (requires traxes but no decision_id)
+    let record = tracker.record_coverage(
+        "AWS_RDS_PROVISION".to_string(),
+        None,
+        &policy,
+    ).unwrap();
+    
+    assert!(matches!(record.coverage_status, CoverageStatus::UNGOVERNED));
+    assert_eq!(record.expected_control_path, "traxes");
+    assert_eq!(record.observed_control_path, "direct");
+    
+    // Test unknown action (not in policy)
+    let record = tracker.record_coverage(
+        "UNKNOWN_TOOL".to_string(),
+        None,
+        &policy,
+    ).unwrap();
+    
+    assert!(matches!(record.coverage_status, CoverageStatus::UNKNOWN));
+    assert_eq!(record.expected_control_path, "none");
+    
+    // Cleanup
+    fs::remove_file("test_integration_policy.yaml").ok();
+    fs::remove_dir_all("coverage").ok();
 }

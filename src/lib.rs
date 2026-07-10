@@ -11,6 +11,8 @@ pub mod action;
 pub mod artifact;
 pub mod artifact_emitter;
 pub mod artifact_tests;
+pub mod load_test;
+pub mod reliability_tests;
 pub mod assets;
 pub mod async_logger;
 pub mod cli_utils;
