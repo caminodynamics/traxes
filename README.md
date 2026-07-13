@@ -1,197 +1,101 @@
 # TRAXES
 
-TRAXES is a deterministic pre-execution control layer that evaluates proposed actions against versioned policies and produces replayable decision artifacts.
+TRAXES is a deterministic pre-execution evaluation layer that validates proposed actions against versioned policy bundles and produces replayable decision artifacts.
 
-Use cases include AI agent tool execution, infrastructure automation, robotics/device command validation, and compliance/governance workflows.
+It is designed for high-integrity workflows such as AI agent tool governance, infrastructure automation, and compliance-driven automation.
 
 ## The Problem
 
-Autonomous systems and AI agents execute real actions in production environments. When an action is allowed or denied, many systems can record what happened, but cannot reproducibly explain why the decision was made. Pre-action validation logic is typically embedded in application code, duplicated across services, and scattered across infrastructure layers. As a result, decisions are difficult to reproduce after the fact, and audit trails are incomplete.
+Autonomous systems and AI agents execute real-world actions (API calls, infrastructure changes, tool execution). Many systems log what happened, but cannot reproducibly explain *why* a specific action was permitted or blocked at a specific point in time. Logic is often scattered across application code, making it difficult to verify and review.
 
-## How TRAXES Works
+TRAXES decouples decision logic from execution logic, providing a deterministic evidence trail that can be verified and replayed.
 
-TRAXES evaluates actions before execution and produces replayable decision artifacts:
+## How It Works
 
-1. A system proposes an action
-2. TRAXES evaluates the action against a versioned policy
-3. TRAXES returns ALLOW or DENY
-4. TRAXES writes a decision artifact capturing the evaluation context and evidence
+TRAXES evaluates actions before they proceed to the execution layer:
+
+1.  **Proposal**: A system (Agent/Service) proposes an action.
+2.  **Evaluation**: TRAXES evaluates the action against a versioned policy bundle.
+3.  **Gate**: TRAXES returns a strictly typed ALLOW or DENY decision.
+4.  **Evidence**: TRAXES writes a replayable decision artifact containing full evaluation context and cryptographic policy hashes.
 
 ### Execution Flow
 
-```
+```text
 ┌─────────────────────────────────┐
 │ Planner / Agent / Service       │
 └────────────┬────────────────────┘
              │
-             ↓
+             ▼
 ┌─────────────────────────────────┐
-│ TRAXES                           │
-│ • Evaluate action against policy │
-│ • Return ALLOW/DENY             │
-│ • Write decision artifact        │
-│ • Support replay verification   │
+│ TRAXES DECISION ENGINE          │
+│ • Deterministic Policy Match    │
+│ • ALLOW/DENY Decision           │
+│ • Decision Artifact Generation  │
 └────────────┬────────────────────┘
              │
-             ↓
+             ▼
 ┌─────────────────────────────────┐
 │ Execution Layer                 │
-│ (if ALLOW)                      │
+│ (Triggered only on ALLOW)       │
 └─────────────────────────────────┘
 ```
 
-TRAXES sits between decision-making systems and execution systems, providing a deterministic control point before actions occur. TRAXES does not execute actions—it evaluates them and produces a decision artifact that downstream systems consume.
+TRAXES sits at the boundary between intent and action. It does not execute the action itself but provides the deterministic "Yes/No" and the evidence to support it.
 
-### Core Properties
+## Core Properties
 
-- **Deterministic evaluation**: Given the same action and policy version, TRAXES produces the same decision
-- **Reproducible decision artifacts**: Every decision produces an artifact containing complete evaluation context and rule evaluation evidence
-- **Policy version tracking**: Artifacts include policy hash to detect policy modifications
-- **Fail-closed behavior**: Malformed inputs resolve to explicit DENY or controlled failure states
+*   **Deterministic Evaluation**: Given the same action and policy version, the engine produces an identical result.
+*   **Replayable Artifacts**: Every decision produces an immutable record containing rule evaluation evidence.
+*   **Policy Versioning**: Artifacts include SHA-256 policy hashes to ensure the exact policy version can be identified and re-run.
+*   **Fail-Closed Design**: Malformed inputs, missing policies, or internal errors resolve to an explicit **DENY**.
 
-## Quick Start
+## Quick Start (Demo)
 
-### Windows (Prebuilt Release Binary)
+### Prebuilt Binaries (Windows)
 
-```powershell
-# Run the interactive demo
-.\traxes-demo.exe demo
+1.  Download `traxes-demo.exe` from [GitHub Releases](https://github.com/caminodynamics/traxes/releases).
+2.  Run the interactive demo:
+    ```powershell
+    .\traxes-demo.exe demo
+    ```
 
-# Run performance benchmarks
-.\traxes-demo.exe benchmark
-```
-
-### Linux/macOS (Source Build)
+### Source Build (All Platforms)
 
 ```bash
-# Build from source
 cargo build --release
 
-# Run the interactive demo
+# Run interactive demo
 ./target/release/traxes-demo demo
 
-# Run performance benchmarks
+# Evaluate a specific payload
+./target/release/traxes-demo eval payloads/allow_db.json
+
+# Run performance benchmark
 ./target/release/traxes-demo benchmark
+
+# Verify a decision artifact
+./target/release/traxes-demo replay <artifact_id>
 ```
 
-The demo runs embedded ALLOW and DENY examples with no external dependencies.
+## Performance & Reliability
 
-### Release
+TRAXES is optimized for high-performance evaluation paths.
 
-- **Binaries**: Download from [GitHub Releases](https://github.com/caminodynamics/traxes/releases)
-- **Documentation**: See [README.md](README.md) for complete documentation
-- **Release Notes**: See [RELEASE_NOTES_v1.md](RELEASE_NOTES_v1.md) for v1.0 details
-- **Reliability**: See [RELIABILITY.md](RELIABILITY.md) for test results and methodology
-- **Benchmark documentation**: See [PERFORMANCE.md](PERFORMANCE.md)
+*   **Latency**: ~4μs typical evaluation (engine logic only).
+*   **Throughput**: Microsecond-scale decision paths with minimal memory overhead.
+*   **Reliability**: 100% pass rate (18/18 scenarios) in reliability validation, covering concurrency safety, fuzzing, and malformed input handling.
 
-### CLI Demo Evaluation (Repository Required)
-
-```bash
-git clone https://github.com/caminodynamics/traxes
-cd traxes
-cargo build --release
-
-# ALLOW evaluation
-traxes-demo eval payloads/allow_db.json
-
-# DENY evaluation
-traxes-demo eval payloads/provision_db_deny.json
-
-# Replay verification
-traxes-demo replay <artifact_id>
-```
-
-## Example Output
-
-### Evaluation
-
-```json
-{
-  "tool": "AWS_RDS_PROVISION",
-  "environment": "staging",
-  "parameters": {
-    "instance_type": "m5.large",
-    "instance_cost_per_hour": 0.52
-  }
-}
-```
-
-```text
-instance_type: m5.large
-policy_version: aws_staging_guardrails@v3
-decision: DENY
-reason: instance_type not permitted for staging environment
-artifact: /artifacts/91bc.json
-```
-
-### Replay Verification
-
-```bash
-traxes-demo --dev replay <decision_id>
-```
-
-```text
-TRAXES Replay Verification
-
-Loading artifact: dec_4a89bb0975394012a6c9bc091313e217
-Original decision: DENY
-Policy hash: 785e022b9921ee6a43ab5044cc8e4a67930c936a1a521f4479269e47eacc52e8
-Policy ID: infra-cost-limit-v1
-Policy version: 1.0.0
-Governance status: GOVERNED
-Endpoint: AWS_RDS_PROVISION::staging
-
-Re-evaluating policy...
-Replay decision: DENY
-
-VERIFICATION RESULT:
-REPLAY MATCH
-
-✓ Decision matches: DENY == DENY
-✓ Policy hash matches: 785e022b9921ee6a43ab5044cc8e4a67930c936a1a521f4479269e47eacc52e8
-✓ Governance status: GOVERNED
-✓ Rule evaluation: infra-cost-limit (true)
-```
-
-If any verification check fails, TRAXES outputs `REPLAY MISMATCH` with specific details about what changed. The original artifact is never modified during replay verification.
+See [RELIABILITY.md](RELIABILITY.md) and [PERFORMANCE.md](../PERFORMANCE.md) for detailed metrics.
 
 ## Coverage Tracking
 
-TRAXES tracks governance coverage for evaluated endpoints. Each decision artifact includes:
+TRAXES tracks policy match coverage across evaluated endpoints (Tool + Environment). Each artifact includes:
+*   **Coverage Status**: `GOVERNED` or `UNGOVERNED`.
+*   **Endpoint Identification**: (e.g., `AWS_RDS_PROVISION::staging`).
+*   **Policy Match Hit**: Verification that a rule actively matched the evaluation path.
 
-- **Coverage Status**: `GOVERNED` or `UNGOVERNED`
-- **Endpoint**: Tool and environment combination (e.g., `AWS_RDS_PROVISION::staging`)
-- **Enforcement Hit**: Whether a policy rule matched the evaluation
-- **Coverage Event Type**: Classification of the evaluation path
-
-Coverage tracking enables governance teams to identify ungoverned endpoints and verify that critical actions are covered by policy definitions.
-
-## Benchmarks
-
-Performance measurements from reliability testing (workload-dependent, not universal guarantees):
-
-- **Typical evaluation latency**: ~4μs
-- **P99 evaluation latency**: ~10μs
-- **Throughput**: ~194K operations/second
-- **Large payload handling**: Linear scaling from 1KB to 1MB (17μs at 1MB)
-
-Measurements represent TRAXES evaluation workloads only and do not include downstream execution time, network latency, or external system calls.
-
-Benchmarks were run on a sustained 60-second load test with 6,000 iterations. See `RELIABILITY.md` for detailed testing methodology.
-
-## Reliability
-
-TRAXES has completed reliability and validation testing covering:
-
-- **18/18 tests passing** (100% success rate)
-- No panics or crashes across all test scenarios
-- Robust error handling for malformed inputs and policy failures
-- Safe concurrent execution with no race conditions
-- Verified artifact integrity and tamper detection
-
-Test categories include malformed input handling, policy failure modes, artifact integrity verification, concurrent execution safety, long-duration stability, large payload stress, persistence failure handling, and fuzz testing.
-
-See `RELIABILITY.md` for complete test results and reproducibility instructions.
+This allows governance teams to identify gaps in policy coverage without requiring a manual inventory of every possible action.
 
 ## Requirements
 

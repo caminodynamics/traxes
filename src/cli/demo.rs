@@ -85,11 +85,11 @@ pub async fn run_async() {
     println!("TRAXES — a Deterministic Pre-Execution Decision Engine that evaluates proposed actions and produces replayable decision artifacts.");
     println!();
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // SCENARIO 1
-    println!("---");
+    println!("------------------------");
     println!();
     println!("SCENARIO 1");
     println!();
@@ -97,16 +97,16 @@ pub async fn run_async() {
     // Show proposed action
     print_proposed_action(assets::ALLOW_PAYLOAD);
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // Print evaluating policy message (skip in fast mode)
     if !crate::cli_utils::is_demo_fast() {
         println!("Evaluating policy...");
     }
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     let allow_decision = crate::cli::eval::run_async_silent(&["allow".to_string()]).await;
 
@@ -114,6 +114,7 @@ pub async fn run_async() {
         Ok(decision) => {
             if decision == "ALLOW" {
                 println!("{}", decision.green());
+                println!();
                 println!("Action may proceed. Artifact recorded.");
             } else {
                 println!("{}", decision.red());
@@ -127,16 +128,16 @@ pub async fn run_async() {
 
     println!();
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // Print writing artifact message (skip in fast mode)
     if !crate::cli_utils::is_demo_fast() {
         println!("writing artifact...");
     }
 
-    // Pause 2000ms
-    pause_if_not_fast(2000);
+    // Pause 1500ms
+    pause_if_not_fast(1500);
 
     // Display compact artifact summary
     println!();
@@ -147,11 +148,11 @@ pub async fn run_async() {
     // Capture ALLOW artifact id for later replay (if available)
     let allow_artifact_id = get_latest_audit_artifact_id();
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // SCENARIO 2
-    println!("---");
+    println!("------------------------");
     println!();
     println!("SCENARIO 2");
     println!();
@@ -159,16 +160,16 @@ pub async fn run_async() {
     // Show proposed action
     print_proposed_action(assets::DENY_PAYLOAD);
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // Print evaluating policy message (skip in fast mode)
     if !crate::cli_utils::is_demo_fast() {
         println!("Evaluating policy...");
     }
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     let deny_decision = crate::cli::eval::run_async_silent(&["deny".to_string()]).await;
 
@@ -192,16 +193,16 @@ pub async fn run_async() {
 
     println!();
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // Print writing artifact message (skip in fast mode)
     if !crate::cli_utils::is_demo_fast() {
         println!("writing artifact...");
     }
 
-    // Pause 2000ms
-    pause_if_not_fast(2000);
+    // Pause 1500ms
+    pause_if_not_fast(1500);
 
     // Display compact artifact summary
     println!();
@@ -209,45 +210,50 @@ pub async fn run_async() {
     crate::cli::artifacts::last_demo_summary();
     println!();
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // Inspect generated artifact (skip message in fast mode)
     if !crate::cli_utils::is_demo_fast() {
         println!("Inspecting generated artifact...");
     }
 
-    // Pause 2500ms
-    pause_if_not_fast(2500);
+    // Pause 1800ms
+    pause_if_not_fast(1800);
 
     // Display compact artifact inspection
     println!();
     crate::cli::artifacts::last_demo_inspection();
     println!();
 
-    // Pause 3000ms
-    pause_if_not_fast(3000);
+    // Pause 2000ms
+    pause_if_not_fast(2000);
 
     // Replay the ALLOW artifact if we captured it earlier
     if let Some(id) = allow_artifact_id {
+        println!();
+        println!("------------------------");
+        println!();
+        println!("Replay Verification");
+        println!();
         if !crate::cli_utils::is_demo_fast() {
             println!("Replaying artifact: {}", id);
         } else {
             println!("Replaying artifact (fast): {}", id);
         }
+        println!();
 
         // Call replay runner with the captured id
         crate::cli::replay::run(&[id.clone()]);
 
-        // Pause 3000ms
-        pause_if_not_fast(3000);
+        // Pause 2200ms
+        pause_if_not_fast(2200);
 
         // Affirmation messages after deterministic replay
-        println!("Replay verification successful.");
-        println!("Decision reproduced successfully.");
+        println!();
 
-        // Pause 3000ms before final summary
-        pause_if_not_fast(3000);
+        // Pause 2000ms before final summary
+        pause_if_not_fast(2000);
 
         // Final concise summary
         println!("Demo complete. Two decisions evaluated. Artifacts generated. Replay verified.");

@@ -141,7 +141,6 @@ pub fn last_demo_summary() {
                 let artifact_name = latest_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
 
                 println!("decision: {}", decision);
-                println!("tool: {}", tool);
                 println!("policy: {}", policy_bundle);
                 println!("artifact: {}", artifact_name);
                 println!("timestamp: {}", timestamp);

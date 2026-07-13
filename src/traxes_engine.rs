@@ -74,12 +74,16 @@ impl EvaluationDecision {
 
 impl Engine {
     pub fn load_default_policies() -> Result<Self, io::Error> {
-        eprintln!("[Traxes] Loading embedded policy (compile-time)");
+        // Only log diagnostic messages outside of demo mode or if debug is enabled
+        let show_diagnostics = !crate::cli_utils::is_demo_mode() || crate::cli_utils::is_debug_mode();
         let policy_yaml = DEFAULT_POLICY_YAML.to_string();
         let policy_hash = calculate_hash_from_content(&policy_yaml);
         let parsed_rules = crate::policy_bundle::parse_policy_rules(&policy_yaml);
-        eprintln!("[Traxes] Policy loaded successfully. Hash: {}", policy_hash);
-        eprintln!("[Traxes] Parsed {} rules from policy", parsed_rules.len());
+        if show_diagnostics {
+            cli_utils::debug_log("[Traxes] Loading embedded policy (compile-time)");
+            cli_utils::debug_log(format!("[Traxes] Policy loaded successfully. Hash: {}", policy_hash));
+            cli_utils::debug_log(format!("[Traxes] Parsed {} rules from policy", parsed_rules.len()));
+        }
         Ok(Self {
             bundle: PolicyBundle {
                 policy_yaml,

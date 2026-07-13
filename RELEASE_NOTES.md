@@ -2,7 +2,7 @@
 
 ## Overview
 
-TRAXES v1 is a deterministic pre-execution evaluation engine that evaluates proposed actions against versioned policies before execution and produces replayable decision artifacts. This release provides production-ready policy evaluation with comprehensive evidence capture for auditability and compliance verification.
+TRAXES v1 is a deterministic pre-execution evaluation engine that evaluates proposed actions against versioned policies before execution and produces replayable decision artifacts. This release provides production-ready policy evaluation with comprehensive evidence capture for verifiability and compliance verification.
 
 ## Key Capabilities
 

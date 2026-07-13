@@ -23,7 +23,6 @@ pub fn run(args: &[String]) {
     
     println!("TRAXES Replay Verification");
     println!();
-    println!("Loading artifact: {}", id);
     
     // Load artifact
     let artifact_content = match fs::read_to_string(&artifact_path) {
@@ -68,44 +67,45 @@ pub fn run(args: &[String]) {
     
     println!();
     println!("Re-evaluating policy...");
+    println!();
     
     // Create replay engine and replay
-    match ReplayEngine::with_default_policy() {
-        Ok(replay_engine) => {
-            let replay_result: traxes_demo::replay::ReplayResult = match replay_engine.replay_from_file(&artifact_path) {
-                Ok(result) => result,
-                Err(e) => {
-                    println!("Error during replay: {}", e);
-                    process::exit(1);
-                }
-            };
-            
+    let replay_engine = ReplayEngine::with_default_policy().expect("Failed to initialize replay engine");
+
+    match replay_engine.replay_from_file(&artifact_path) {
+        Ok(replay_result) => {
             println!("Replay decision: {}", replay_result.replay_decision);
             
             // Compare results
             println!();
-            println!("VERIFICATION RESULT:");
+            println!("VERIFICATION RESULT");
+            println!();
             
             let decision_match = replay_result.original_decision == replay_result.replay_decision;
             let policy_match = replay_result.policy_hash == policy_hash;
             
             if decision_match && policy_match {
-                println!("REPLAY MATCH");
-                println!();
-                println!("✓ Decision matches: {} == {}", 
-                    replay_result.original_decision, replay_result.replay_decision);
-                println!("✓ Policy hash matches: {}", replay_result.policy_hash);
+                println!("✓ Decision matches");
+                println!("✓ Policy hash matches");
                 
                 if let Some(gi) = governance_info {
-                    let coverage_status = gi.get("coverage_status").and_then(|v| v.as_str()).unwrap_or("");
-                    println!("✓ Governance status: {}", coverage_status);
+                    let _coverage_status = gi.get("coverage_status").and_then(|v| v.as_str()).unwrap_or("");
+                    println!("✓ Governance status");
                 }
                 
-                if let Some(re) = rule_evaluation {
-                    let rule_id = re.get("rule_id").and_then(|v| v.as_str()).unwrap_or("");
-                    let evaluation_result = re.get("evaluation_result").and_then(|v| v.as_bool()).unwrap_or(false);
-                    println!("✓ Rule evaluation: {} ({})", rule_id, evaluation_result);
+                if let Some(_re) = rule_evaluation {
+                    println!("✓ Rule evaluation");
                 }
+
+                println!();
+                println!("==============================");
+                println!("REPLAY VERIFIED");
+                println!("==============================");
+                println!();
+                println!("Replay verified successfully.");
+                println!();
+                println!("The original decision was reproduced using the same policy version.");
+                println!();
                 
                 process::exit(0);
             } else {

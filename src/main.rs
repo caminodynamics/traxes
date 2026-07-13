@@ -246,6 +246,7 @@ async fn main() {
             return;
         }
         "demo" => {
+            cli_utils::set_demo_mode(true);
             cli::demo::run_async().await;
             return;
         }
