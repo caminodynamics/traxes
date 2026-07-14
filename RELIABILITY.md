@@ -321,7 +321,7 @@ Based on comprehensive reliability testing, TRAXES demonstrates:
 
 - **Reliability**: Excellent - No panics or crashes detected across all test scenarios
 - **Error Handling**: Robust - System handles malformed inputs, policy failures, and persistence errors gracefully
-- **Performance**: Stable - Consistent throughput (~194K ops/sec) with acceptable latency variance
+- **Performance**: Stable - Consistent throughput (~194K ops/sec in 60-second reliability test) with acceptable latency variance
 - **Concurrency**: Safe - No race conditions or data corruption under concurrent load
 - **Integrity**: Verified - Artifact replay detects policy hash modifications and decision tampering
 

@@ -75,15 +75,15 @@ cargo build --release
 ./target/release/traxes-demo benchmark
 
 # Verify a decision artifact
-./target/release/traxes-demo replay <artifact_id>
+./target/release/traxes-demo --dev replay <artifact_id>
 ```
 
 ## Performance & Reliability
 
 TRAXES is optimized for high-performance evaluation paths.
 
-*   **Latency**: ~4μs typical evaluation (engine logic only).
-*   **Throughput**: Microsecond-scale decision paths with minimal memory overhead.
+*   **Latency**: 0.17-0.61μs average evaluation (engine logic only, 10K iterations, varies across runs).
+*   **Throughput**: 625K-811K ops/sec (single-threaded benchmark, 10K iterations, varies across runs).
 *   **Reliability**: 100% pass rate (18/18 scenarios) in reliability validation, covering concurrency safety, fuzzing, and malformed input handling.
 
 See [RELIABILITY.md](RELIABILITY.md) and [PERFORMANCE.md](../PERFORMANCE.md) for detailed metrics.

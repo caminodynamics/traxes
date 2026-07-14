@@ -40,14 +40,13 @@ TRAXES is a deterministic pre-execution control layer that evaluates proposed ac
 See [RELIABILITY.md](RELIABILITY.md) for complete test results and methodology.
 
 ### Benchmark Results
-- Typical evaluation latency: ~4μs
-- P99 evaluation latency: ~10μs
-- Throughput: ~194K operations/second
-- Large payload handling: Linear scaling from 1KB to 1MB (17μs at 1MB)
+- Average evaluation latency: 0.17-0.61μs (10K iterations, single-threaded benchmark, varies across runs)
+- Throughput: 625K-811K ops/sec (single-threaded benchmark, varies across runs)
+- Large payload handling: Linear scaling observed in reliability tests
 
 Measurements represent TRAXES evaluation workloads only and do not include downstream execution time, network latency, or external system calls.
 
-Benchmarks were run on a sustained 60-second load test with 6,000 iterations.
+Benchmarks were run using the standard benchmark command: `./target/release/traxes-demo benchmark`
 
 ## Installation
 

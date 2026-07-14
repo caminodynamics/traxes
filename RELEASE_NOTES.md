@@ -50,9 +50,8 @@ TRAXES v1 is a deterministic pre-execution evaluation engine that evaluates prop
 
 ## Performance
 
-- **Evaluation latency**: ~16-26 microseconds (typical)
-- **Throughput**: 4.7M ops/sec (single thread), 1.5M ops/sec (16 threads)
-- **Artifact write latency**: ~42 microseconds
+- **Evaluation latency**: 0.17-0.61μs average (10K iterations, single-threaded benchmark, varies across runs)
+- **Throughput**: 625K-811K ops/sec (single-threaded benchmark, varies across runs)
 - **Memory footprint**: Minimal runtime overhead
 
 ## Installation
