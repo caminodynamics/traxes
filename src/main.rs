@@ -242,7 +242,7 @@ async fn main() {
 
     match args[1].as_str() {
         "eval" => {
-            cli_layer::run().await;
+            cli::run().await;
             return;
         }
         "demo" => {
@@ -332,7 +332,7 @@ async fn main() {
             return;
         }
         "status" => {
-            cli_layer::run().await;
+            cli::run().await;
             return;
         }
         "coverage" => {

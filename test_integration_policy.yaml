@@ -1,0 +1,3 @@
+
+AWS_RDS_PROVISION:
+  requires_traxes: true

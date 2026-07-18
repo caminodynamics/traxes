@@ -23,7 +23,6 @@ pub mod execution_event;
 pub mod metrics;
 pub mod policy;
 pub mod policy_bundle;
-pub mod policy_old;
 pub mod replay;
 pub mod server_policy;
 pub mod traxes_engine;
