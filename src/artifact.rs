@@ -278,7 +278,7 @@ impl AuditArtifact {
             policy_hash,
             engine: EngineInfo {
                 name: "Traxes".to_string(),
-                engine_version: "0.3.2".to_string(),
+                engine_version: "1.0.0".to_string(),
                 policy_bundle_id: POLICY_BUNDLE.to_string(),
             },
             policy_info,  // NEW: Policy metadata

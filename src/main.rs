@@ -395,7 +395,7 @@ async fn main() {
             let app = Router::new()
                 .route("/evaluate", post(evaluate_action))
                 .with_state(state)
-                .route("/", axum::routing::get(|| async { "Traxes Engine v0.3.2" }));
+                .route("/", axum::routing::get(|| async { "Traxes Engine v1.0.0" }));
 
             let port = env::var("PORT").unwrap_or_else(|_| "8082".to_string());
             let bind_address = format!("0.0.0.0:{}", port);

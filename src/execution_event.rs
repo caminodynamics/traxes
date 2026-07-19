@@ -186,7 +186,7 @@ impl ExecutionEvent {
         let replay_metadata = ReplayMetadata {
             policy_hash: record.policy_hash.clone(),
             action_hash,
-            engine_version: "0.3.2".to_string(),
+            engine_version: "1.0.0".to_string(),
             sequence: 0,
         };
         

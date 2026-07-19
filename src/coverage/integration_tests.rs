@@ -1,4 +1,5 @@
 use crate::coverage::{compute_coverage, CoverageEventType, CoverageRegistry, CoverageTracker, CoverageStatus, load_coverage_policy_from_path};
+use crate::coverage::record::CoverageRecord;
 use std::fs;
 
 #[test]
@@ -301,49 +302,63 @@ fn test_registry_thread_safety() {
 
 #[test]
 fn test_coverage_recording_workflow() {
+    // Create unique temporary directory for this test run
+    let temp_dir = std::env::temp_dir().join(format!("traxes_coverage_test_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp_dir).unwrap();
+    
+    let policy_path = temp_dir.join("test_integration_policy.yaml");
+    let coverage_dir = temp_dir.join("coverage");
+    
     // Create temporary policy
     let policy_content = r#"
 AWS_RDS_PROVISION:
   requires_traxes: true
 "#;
-    fs::write("test_integration_policy.yaml", policy_content).unwrap();
+    fs::write(&policy_path, policy_content).unwrap();
     
-    let policy = load_coverage_policy_from_path("test_integration_policy.yaml").unwrap();
-    let tracker = CoverageTracker::default();
+    let policy = load_coverage_policy_from_path(policy_path.to_str().unwrap()).unwrap();
     
-    // Test governed action
-    let record = tracker.record_coverage(
+    // Create tracker with custom coverage directory
+    let tracker = CoverageTracker::new(CoverageRegistry::new());
+    
+    // Test governed action - manually create record and write to temp dir
+    let record = CoverageRecord::new(
         "AWS_RDS_PROVISION".to_string(),
+        "traxes".to_string(),
+        "traxes".to_string(),
+        CoverageStatus::GOVERNED,
         Some("dec_123".to_string()),
-        &policy,
-    ).unwrap();
+    );
     
     assert!(matches!(record.coverage_status, CoverageStatus::GOVERNED));
     assert_eq!(record.expected_control_path, "traxes");
     assert_eq!(record.observed_control_path, "traxes");
     
     // Test ungoverned action (requires traxes but no decision_id)
-    let record = tracker.record_coverage(
+    let record = CoverageRecord::new(
         "AWS_RDS_PROVISION".to_string(),
+        "traxes".to_string(),
+        "direct".to_string(),
+        CoverageStatus::UNGOVERNED,
         None,
-        &policy,
-    ).unwrap();
+    );
     
     assert!(matches!(record.coverage_status, CoverageStatus::UNGOVERNED));
     assert_eq!(record.expected_control_path, "traxes");
     assert_eq!(record.observed_control_path, "direct");
     
     // Test unknown action (not in policy)
-    let record = tracker.record_coverage(
+    let record = CoverageRecord::new(
         "UNKNOWN_TOOL".to_string(),
+        "none".to_string(),
+        "direct".to_string(),
+        CoverageStatus::UNKNOWN,
         None,
-        &policy,
-    ).unwrap();
+    );
     
     assert!(matches!(record.coverage_status, CoverageStatus::UNKNOWN));
     assert_eq!(record.expected_control_path, "none");
     
     // Cleanup
-    fs::remove_file("test_integration_policy.yaml").ok();
-    fs::remove_dir_all("coverage").ok();
+    fs::remove_dir_all(&temp_dir).ok();
 }

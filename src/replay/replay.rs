@@ -198,7 +198,7 @@ mod tests {
             sha256_hash: "test-sha256".to_string(),
             engine: crate::artifact::EngineInfo {
                 name: "Traxes".to_string(),
-                engine_version: "0.3.2".to_string(),
+                engine_version: "1.0.0".to_string(),
                 policy_bundle_id: "test".to_string(),
             },
             execution_context: crate::artifact::ExecutionContext {

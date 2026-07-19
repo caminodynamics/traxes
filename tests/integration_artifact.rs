@@ -54,7 +54,7 @@ fn test_allow_decision_artifact_generation() {
     
     // Verify engine info
     assert_eq!(artifact.engine.name, "Traxes");
-    assert_eq!(artifact.engine.engine_version, "0.3.2");
+    assert_eq!(artifact.engine.engine_version, "1.0.0");
     
     // Verify execution context
     assert_eq!(artifact.execution_context.session_id, "test-session-001");
@@ -384,7 +384,7 @@ fn test_artifact_construction_identity() {
     let replay_metadata = ReplayMetadata {
         policy_hash: policy_hash.to_string(),
         action_hash: "test-action-hash".to_string(),
-        engine_version: "0.3.2".to_string(),
+        engine_version: "1.0.0".to_string(),
         sequence: 0,
     };
     

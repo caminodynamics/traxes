@@ -199,7 +199,7 @@ mod backward_compatibility_tests {
             "sha256_hash": "test-sha256",
             "engine": {
                 "name": "Traxes",
-                "engine_version": "0.3.2",
+                "engine_version": "1.0.0",
                 "policy_bundle_id": "infra-cost-limit-v1"
             },
             "execution_context": {
@@ -263,7 +263,7 @@ mod backward_compatibility_tests {
             "sha256_hash": "test-sha256",
             "engine": {
                 "name": "Traxes",
-                "engine_version": "0.3.2",
+                "engine_version": "1.0.0",
                 "policy_bundle_id": "infra-cost-limit-v1"
             },
             "execution_context": {

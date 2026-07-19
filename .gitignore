@@ -3,6 +3,8 @@
 ############################################
 /target/
 **/*.rs.bk
+*.exe
+!docs/internal/legacy-release/*.exe
 
 ############################################
 # Python cache
@@ -29,6 +31,7 @@ contention*
 bottleneck*
 timing*
 audit*
+!src/audit_architecture.rs
 performance*.log
 performance*.out
 temp_executed_*.txt
@@ -40,6 +43,7 @@ benchmark_results.json
 ############################################
 artifacts/
 coverage/
+!src/coverage/
 *.jsonl
 *.dump
 *.zip
