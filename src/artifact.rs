@@ -68,8 +68,11 @@ pub struct ProposedActionInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionParameters {
-    pub instance_type: String,
-    pub instance_cost_per_hour: f64,
+    pub instance_type: Option<String>,
+    pub instance_cost_per_hour: Option<f64>,
+    pub path: Option<String>,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -169,24 +172,49 @@ impl AuditArtifact {
         evaluation_result: &EvaluationResult,
     ) -> String {
         let env = &action.environment;
-        let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let hash_input = format!(
-            "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
-            decision_id,
-            action.tool,
-            action.session_id,
-            env,
-            instance_type,
-            cost_per_hour,
-            decision,
-            &evaluation_result.reason,
-            POLICY_BUNDLE,
-            evaluation_result.field,
-            evaluation_result.observed_value,
-            "<=",
-            evaluation_result.policy_value
-        );
+        let param_key = crate::server_policy::parameter_key(&evaluation_result.field);
+
+        // Minimal compatibility: reproduce HEAD fingerprint semantics for the
+        // canonical AWS `instance_type` case, otherwise use the generalized
+        // (list-aware) composition that includes the observed parameter value.
+        let hash_input = if param_key == "instance_type" {
+            // Reproduce HEAD composition exactly for instance_type.
+            let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            format!(
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                decision_id,
+                action.tool,
+                action.session_id,
+                env,
+                instance_type,
+                cost_per_hour,
+                decision,
+                &evaluation_result.reason,
+                POLICY_BUNDLE,
+                evaluation_result.field,
+                evaluation_result.observed_value,
+                "<=",
+                evaluation_result.policy_value
+            )
+        } else {
+            let observed_val_str = action.parameters.get(param_key)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            format!(
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                decision_id,
+                action.tool,
+                action.session_id,
+                env,
+                observed_val_str,
+                decision,
+                &evaluation_result.reason,
+                POLICY_BUNDLE,
+                evaluation_result.field,
+            )
+        };
 
         let mut hasher = Sha256::new();
         hasher.update(hash_input.as_bytes());
@@ -228,8 +256,19 @@ impl AuditArtifact {
         };
 
         let env = action.environment.clone();
-        let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-        let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        
+        let mut extra = std::collections::HashMap::new();
+        if let Some(obj) = action.parameters.as_object() {
+            for (k, v) in obj {
+                if k != "instance_type" && k != "instance_cost_per_hour" && k != "path" {
+                    extra.insert(k.clone(), v.clone());
+                }
+            }
+        }
+
+        let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let instance_cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64());
+        let path = action.parameters.get("path").and_then(|v| v.as_str()).map(|s| s.to_string());
         
         // NEW: Create PolicyInfo with version
         let policy_info = Some(PolicyInfo {
@@ -245,8 +284,8 @@ impl AuditArtifact {
         let rule_evaluation = RuleEvaluationInfo {
             rule_id: "infra-cost-limit".to_string(),
             field: evaluation_result.field.clone(),
-            // For instance_type fields, use string value; for numeric fields, use numeric value
-            observed_value: if evaluation_result.field.contains("instance_type") {
+            // Use operator-based classification: list operators (in_list, not_in) use string values
+            observed_value: if crate::server_policy::is_list_operator(&evaluation_result.rule) {
                 serde_json::Value::String(evaluation_result.observed_value_str.clone())
             } else {
                 serde_json::Value::Number(serde_json::Number::from_f64(evaluation_result.observed_value).unwrap_or(serde_json::Number::from(0)))
@@ -291,7 +330,9 @@ impl AuditArtifact {
                 environment: env,
                 parameters: ActionParameters {
                     instance_type,
-                    instance_cost_per_hour: cost_per_hour,
+                    instance_cost_per_hour,
+                    path,
+                    extra,
                 },
             },
             rule_evaluation,

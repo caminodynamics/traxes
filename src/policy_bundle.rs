@@ -112,6 +112,10 @@ pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: 
     missing_threshold_result(action)
 }
 
+// Operator-based classification: list operators are explicit in parsed rules.
+// The previous field-name heuristic was brittle and is removed. Use the
+// rule operator (in_list / not_in) rather than inspecting field names.
+
 fn evaluate_numeric_lte(
     action: &ProposedAction,
     evaluator: &PolicyEvaluator,
@@ -156,15 +160,16 @@ fn evaluate_list_rule(
     };
 
     let action_result = evaluator.evaluate(action, &rule);
-    // Extract the actual field value being evaluated (instance_type), not cost_per_hour
-    let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let param_key = crate::server_policy::parameter_key(field);
+    let observed_value_raw = action.parameters.get(param_key).and_then(|v| v.as_str()).unwrap_or("unknown");
     
     // Return raw observed values - hashing moved to artifact generation phase
-    let (observed_value, observed_value_str) = if field == "instance_type" || field.contains("instance_type") {
-        // For instance_type field, return 0.0 as placeholder (hash computed in artifact.rs)
-        (0.0, instance_type.to_string())
+    // Classify by operator (op) rather than field name. If this is a list
+    // operator, return string observed value; otherwise assume numeric (cost).
+    let (observed_value, observed_value_str) = if op == "in_list" || op == "not_in" {
+        (0.0, observed_value_raw.to_string())
     } else {
+        let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
         (cost_per_hour, cost_per_hour.to_string())
     };
     

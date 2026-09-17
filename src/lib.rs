@@ -1,4 +1,4 @@
-//! Library crate for traxes-demo policy evaluation engine
+﻿//! Library crate for traxes-demo policy evaluation engine
 //! 
 //! This library provides the core policy evaluation functionality for the
 //! Traxes decision runtime, including:
@@ -28,6 +28,9 @@ pub mod server_policy;
 pub mod traxes_engine;
 pub mod workload;
 
+#[cfg(test)]
+mod minimal_patch_tests;
+
 // Memory allocation tracking utilities
 #[cfg(feature = "metrics")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,3 +58,4 @@ pub use action::ProposedAction;
 pub use artifact::{AuditArtifact, ArtifactLogger};
 pub use traxes_engine::{DecisionRecord, Engine, EvaluationDecision};
 pub use server_policy::{EvaluationResult, PolicyEvaluator, Rule};
+

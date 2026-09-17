@@ -16,6 +16,20 @@ pub struct EvaluationResult {
     pub evaluation_expression: String,
     pub reason: String,
 }
+/// Last path segment of a parsed policy field (`payload.proposed_action.parameters.path` → `path`).
+pub fn parameter_key(field: &str) -> &str {
+    field
+        .rsplit('.')
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(field)
+}
+
+pub fn is_list_operator(op: &str) -> bool {
+    op == "not_in" || op == "in_list"
+}
+
 pub struct Rule {
     pub operator: String,
     pub field: String,
@@ -80,7 +94,8 @@ impl PolicyEvaluator {
                     }
                 };
 
-                let payload_val = payload.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let param_key = parameter_key(&rule.field);
+                let payload_val = payload.parameters.get(param_key).and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
                 if allowed.contains(&payload_val) {
                     Some(rule.action.clone())
                 } else {
@@ -106,7 +121,8 @@ impl PolicyEvaluator {
                     }
                 };
 
-                let payload_val = payload.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let param_key = parameter_key(&rule.field);
+                let payload_val = payload.parameters.get(param_key).and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
                 // If payload is NOT in the list, it's a violation → return DENY action
                 // If payload IS in the list, it's allowed → return None (no action)
                 if !list.contains(&payload_val) {
