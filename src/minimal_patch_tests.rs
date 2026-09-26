@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::action::ProposedAction;
-    use crate::artifact::{AuditArtifact, ArtifactLogger};
+    use crate::artifact::{ArtifactLogger, AuditArtifact};
     use crate::replay::{ReplayEngine, Verifier};
     use crate::traxes_engine::Engine;
     use serde_json::json;
@@ -37,7 +37,10 @@ mod tests {
         };
         let evaluation = engine.evaluate(&action);
         assert_eq!(evaluation.decision, "DENY");
-        assert!(evaluation.result.reason.contains("INSTANCE_TYPE_CONSTRAINT_CHECK"));
+        assert!(evaluation
+            .result
+            .reason
+            .contains("INSTANCE_TYPE_CONSTRAINT_CHECK"));
     }
 
     #[test]
@@ -60,7 +63,7 @@ rules:
         let engine2 = Engine::with_policy(policy2.to_string());
         let evaluation2 = engine2.evaluate(&action);
         if evaluation2.decision != "ALLOW" {
-             panic!("Expected ALLOW");
+            panic!("Expected ALLOW");
         }
     }
 
@@ -89,7 +92,10 @@ rules:
         let replay_engine = ReplayEngine::new(engine);
         let replay_result = replay_engine.replay_from_artifact(&artifact);
         assert!(replay_result.match_status);
-        assert_eq!(replay_result.original_decision, replay_result.replay_decision);
+        assert_eq!(
+            replay_result.original_decision,
+            replay_result.replay_decision
+        );
     }
 
     #[test]
@@ -217,7 +223,10 @@ rules:
             "executed".to_string(),
         );
 
-        assert_eq!(artifact.proposed_action.parameters.path, Some("/tmp/test.txt".to_string()));
+        assert_eq!(
+            artifact.proposed_action.parameters.path,
+            Some("/tmp/test.txt".to_string())
+        );
     }
 
     #[test]
@@ -249,9 +258,184 @@ rules:
 
         let replay_engine = ReplayEngine::new(engine);
         let replay_result = replay_engine.replay_from_artifact(&artifact);
-        
+
         if !replay_result.match_status {
-             panic!("MISMATCH");
+            panic!("MISMATCH");
         }
+    }
+
+    #[test]
+    fn test_file_write_execute_allow_and_deny_behavior() {
+        // Ensure action::execute is the single execution boundary for FILE_WRITE
+        let sandbox = std::env::temp_dir().join("traxes_file_write_test");
+        let _ = std::fs::create_dir_all(&sandbox);
+        let target = sandbox.join("exec_allowed.txt");
+        let target_str = target.to_string_lossy().replace('\\', "/");
+
+        // Build a policy that allows only the target path and denies others (explicit allowlist)
+        let policy = format!(
+            r#"apiVersion: Traxes.dev/v1
+kind: ExecutionPolicy
+metadata:
+  name: filesystem-write-allowlist
+target:
+  tool: FILE_WRITE
+rules:
+  - name: file_write_path_allowlist
+    condition: payload.proposed_action.parameters.path not in ["{}"]
+    action: DENY
+    reason: "File write path outside allowlist for sandbox."
+"#,
+            target_str
+        );
+        let engine = Engine::with_policy(policy.to_string());
+
+        // Build action
+        let action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "sid-exec".to_string(),
+            environment: "env".to_string(),
+            parameters: json!({
+                "path": target_str,
+                "content": "minimal test payload"
+            }),
+        };
+
+        // Evaluate for the allowed action
+        let evaluation = engine.evaluate(&action);
+        let decision_id = Uuid::new_v4().to_string();
+
+        // Execute through central boundary
+        let exec_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
+
+        // ALLOW case: must have executed and created the file
+        assert_eq!(evaluation.decision, "ALLOW");
+        assert_eq!(exec_status, "executed");
+        assert!(target.exists(), "ALLOW must create the target file");
+        let contents = std::fs::read_to_string(&target).unwrap_or_default();
+        assert_eq!(contents, "minimal test payload");
+
+        // Now construct a DENY action (different path) and ensure it's blocked
+        let deny_target = sandbox.join("exec_denied.txt");
+        let deny_target_str = deny_target.to_string_lossy().replace('\\', "/");
+        let deny_action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "sid-exec-deny".to_string(),
+            environment: "env".to_string(),
+            parameters: json!({
+                "path": deny_target_str,
+                "content": "should not be written"
+            }),
+        };
+        let deny_eval = engine.evaluate(&deny_action);
+        assert_eq!(deny_eval.decision, "DENY");
+        let deny_decision_id = Uuid::new_v4().to_string();
+        let deny_exec_status =
+            crate::action::execute(&deny_action, &deny_eval.decision, &deny_decision_id);
+        assert_eq!(deny_exec_status, "blocked");
+        assert!(
+            !deny_target.exists(),
+            "DENY must NOT create the target file"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn test_file_write_allow_filesystem_failure_fails_closed() {
+        // Create a directory and attempt to write to that directory path (should fail)
+        let sandbox = std::env::temp_dir().join("traxes_file_write_failtest");
+        let _ = std::fs::create_dir_all(&sandbox);
+        let dir_target = sandbox.join("a_directory");
+        let _ = std::fs::create_dir_all(&dir_target);
+        let dir_target_str = dir_target.to_string_lossy().replace('\\', "/");
+
+        let action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "sid-fail".to_string(),
+            environment: "env".to_string(),
+            parameters: json!({
+                // Intentionally point at a directory to cause write failure
+                "path": dir_target_str,
+                "content": "will fail"
+            }),
+        };
+
+        // Use a simple engine that allows this path so execute() will attempt the write
+        let decision = "ALLOW".to_string();
+        let decision_id = Uuid::new_v4().to_string();
+
+        let exec_status = crate::action::execute(&action, &decision, &decision_id);
+
+        // Expect failure to write to a directory -> blocked and no "executed"
+        assert_eq!(exec_status, "blocked");
+        // Ensure no regular file was created at that path
+        assert!(dir_target.exists() && dir_target.is_dir());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn test_file_write_replay_does_not_recreate_target() {
+        // Ensure replay verifies decision but does not execute FILE_WRITE
+        // Build the allowlist policy after we know the actual target path
+        let sandbox = std::env::temp_dir().join("traxes_file_write_replay_test");
+        let _ = std::fs::create_dir_all(&sandbox);
+        let target = sandbox.join("replay_target.txt");
+        let target_str = target.to_string_lossy().replace('\\', "/");
+
+        let action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "sid-replay".to_string(),
+            environment: "env".to_string(),
+            parameters: json!({
+                "path": target_str,
+                "content": "replay payload"
+            }),
+        };
+        // Build policy to allow only this target path
+        let policy = format!(
+            r#"rules:
+  - name: path_limit
+    condition: payload.proposed_action.parameters.path not in ["{}"]
+    action: DENY
+"#,
+            target_str
+        );
+        let engine = Engine::with_policy(policy.to_string());
+
+        let evaluation = engine.evaluate(&action);
+        assert_eq!(evaluation.decision, "ALLOW");
+        let decision_id = Uuid::new_v4().to_string();
+
+        // Execute to create the file
+        let exec_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
+        if evaluation.decision == "ALLOW" {
+            assert_eq!(exec_status, "executed");
+            assert!(target.exists());
+        }
+
+        // Remove the file to simulate non-replay environment
+        let _ = std::fs::remove_file(&target);
+        assert!(!target.exists());
+
+        // Replay should match but must not recreate the file
+        let replay_engine = ReplayEngine::new(engine);
+        let artifact = ArtifactLogger::generate_artifact(
+            &decision_id,
+            &action,
+            &evaluation,
+            replay_engine.engine.policy_hash(),
+            exec_status,
+        );
+        let replay_res = replay_engine.replay_from_artifact(&artifact);
+        assert!(replay_res.match_status);
+        assert!(!target.exists(), "Replay must not recreate the target file");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&sandbox);
     }
 }
