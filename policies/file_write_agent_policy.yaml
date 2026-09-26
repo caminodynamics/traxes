@@ -1,0 +1,15 @@
+apiVersion: Traxes.dev/v1
+kind: ExecutionPolicy
+metadata:
+  name: file-write-agent-policy
+  environment: sandbox
+target:
+  tool: FILE_WRITE
+rules:
+  - name: deny_forbidden_filename
+    condition: payload.proposed_action.parameters.path in ["forbidden.txt"]
+    action: DENY
+    reason: "Deny writes to files with forbidden filename"
+  - name: allow_other_paths
+    action: ALLOW
+    reason: "Allow writes to other paths"
