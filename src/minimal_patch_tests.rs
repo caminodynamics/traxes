@@ -438,4 +438,198 @@ rules:
         // Cleanup
         let _ = std::fs::remove_dir_all(&sandbox);
     }
+
+    #[test]
+    fn test_async_path_preserves_operator_in_artifact() {
+        // Test that the async/HTTP path preserves the actual operator (in_list/not_in)
+        // rather than the rule_id in the artifact
+        use crate::execution_event::ExecutionEvent;
+        use crate::traxes_engine::DecisionRecord;
+
+        let action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "sid-async".to_string(),
+            environment: "env".to_string(),
+            parameters: json!({
+                "path": "/tmp/test.txt"
+            }),
+        };
+
+        let policy = r#"
+rules:
+  - name: path_limit
+    condition: payload.proposed_action.parameters.path not in ["/etc/passwd"]
+    action: DENY
+"#;
+        let engine = Engine::with_policy(policy.to_string());
+        let evaluation = engine.evaluate(&action);
+
+        // Create a DecisionRecord (what goes through the async queue)
+        let record = DecisionRecord {
+            decision: evaluation.decision.clone(),
+            session_id: action.session_id.clone(),
+            tool: action.tool.clone(),
+            environment: action.environment.clone(),
+            parameters: action.parameters.clone(),
+            policy_hash: engine.policy_hash().to_string(),
+            evaluation_result: evaluation.result.clone(),
+            evaluation_latency_us: evaluation.evaluation_latency_us,
+            decision_id: "test-dec-id".to_string(),
+            trace_id: "test-trace-id".to_string(),
+            execution_status: "executed".to_string(),
+        };
+
+        // Convert to ExecutionEvent (async worker does this)
+        let event = ExecutionEvent::from_record(record);
+
+        // Convert back to EvaluationDecision (artifact construction)
+        let reconstructed = event.to_evaluation_decision();
+
+        // The reconstructed rule should be the operator "not_in", not the rule_id
+        assert_eq!(reconstructed.rule, "not_in",
+            "Async path must preserve operator, not rule_id");
+        assert_eq!(reconstructed.field, evaluation.result.field);
+
+        let (_, rx) = tokio::sync::mpsc::channel(1);
+        let emitter = crate::artifact_emitter::ArtifactEmitter::new(
+            rx, engine.policy_hash().to_string(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        for operator in ["not_in", "in_list"] {
+            let mut event = event.clone();
+            event.rule_trace.operator = operator.to_string();
+            let artifact = emitter.event_to_artifact(event).unwrap();
+            assert_eq!(artifact.rule_evaluation.operator, operator);
+            assert_eq!(artifact.rule_evaluation.observed_value, json!("/tmp/test.txt"));
+            assert_eq!(artifact.rules_evaluated.unwrap()[0].operator, operator);
+        }
+    }
+
+    #[test]
+    fn test_file_write_hash_binds_content_and_metadata() {
+        let engine = Engine::with_policy("rules: []".to_string());
+        let action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "session".to_string(),
+            environment: "sandbox".to_string(),
+            parameters: json!({"path": "allowed.txt", "content": "original"}),
+        };
+        // Hold evaluation and decision ID fixed to isolate action binding.
+        let evaluation = engine.evaluate(&action);
+        let hash = |action: &ProposedAction| ArtifactLogger::generate_artifact(
+            "fixed-id", action, &evaluation, engine.policy_hash(), "blocked".to_string(),
+        ).sha256_hash;
+        let original = hash(&action);
+        assert_eq!(original, hash(&action));
+        for field in ["content", "path"] {
+            let mut changed = action.clone();
+            changed.parameters[field] = json!("changed");
+            assert_ne!(original, hash(&changed), "must bind {field}");
+        }
+        let mut changed = action.clone();
+        changed.session_id.push_str("-changed");
+        assert_ne!(original, hash(&changed));
+        let mut changed = action.clone();
+        changed.environment.push_str("-changed");
+        assert_ne!(original, hash(&changed));
+        let mut changed = action.clone();
+        changed.parameters.as_object_mut().unwrap().remove("content");
+        let missing = hash(&changed);
+        changed.parameters["content"] = json!("");
+        assert_ne!(missing, hash(&changed));
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    fn test_file_write_rejects_symlink_escape() {
+        let sandbox = std::env::temp_dir().join(format!("traxes-links-{}", Uuid::new_v4()));
+        let governed = sandbox.join("governed");
+        let outside = sandbox.join("outside");
+        std::fs::create_dir_all(&governed).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim.txt");
+        std::fs::write(&victim, "untouched").unwrap();
+        let link = governed.join("approved.txt");
+        #[cfg(unix)]
+        let result = std::os::unix::fs::symlink(&victim, &link);
+        #[cfg(windows)]
+        let result = std::os::windows::fs::symlink_file(&victim, &link);
+        #[cfg(windows)]
+        if result.as_ref().err().and_then(|error| error.raw_os_error()) == Some(1314) {
+            eprintln!("SKIPPED: symlink assertions were not executed because Windows symlink privilege was unavailable (error 1314); Windows junction regression runs separately.");
+            std::fs::remove_dir_all(&sandbox).unwrap();
+            return;
+        }
+        result.unwrap();
+
+        let check = |path: &std::path::Path| {
+            let action = ProposedAction {
+                tool: "FILE_WRITE".to_string(), session_id: "links".to_string(),
+                environment: "sandbox".to_string(),
+                parameters: json!({"path": path, "content": "escaped"}),
+            };
+            assert_eq!(crate::action::execute(&action, "ALLOW", "links"), "blocked");
+        };
+        check(&link);
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+        std::fs::remove_file(&link).unwrap();
+        let missing = outside.join("missing.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&missing, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&missing, &link).unwrap();
+        check(&link);
+        assert!(!missing.exists());
+        std::fs::remove_file(&link).unwrap();
+
+        let parent = governed.join("redirect");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &parent).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside, &parent).unwrap();
+        check(&parent.join("victim.txt"));
+        check(&parent.join("missing.txt"));
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+        assert!(!missing.exists());
+        #[cfg(unix)]
+        std::fs::remove_file(&parent).unwrap();
+        #[cfg(windows)]
+        std::fs::remove_dir(&parent).unwrap();
+        std::fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_file_write_rejects_windows_junction_escape() {
+        let sandbox = std::env::temp_dir().join(format!("traxes-junction-{}", Uuid::new_v4()));
+        let outside = sandbox.join("outside");
+        let governed = sandbox.join("governed");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&governed).unwrap();
+        let junction = governed.join("redirect");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction).arg(&outside).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let victim = outside.join("victim.txt");
+        std::fs::write(&victim, "untouched").unwrap();
+        for name in ["victim.txt", "missing.txt"] {
+            let path = junction.join(name).to_string_lossy().replace('\\', "/");
+            let engine = Engine::with_policy(format!(
+                "rules:\n  - name: allowlist\n    condition: payload.proposed_action.parameters.path not in [\"{path}\"]\n    action: DENY\n"
+            ));
+            let action = ProposedAction {
+                tool: "FILE_WRITE".to_string(), session_id: "junction".to_string(),
+                environment: "sandbox".to_string(),
+                parameters: json!({"path": path, "content": "escaped"}),
+            };
+            let evaluation = engine.evaluate(&action);
+            assert_eq!(evaluation.decision, "ALLOW");
+            assert_eq!(crate::action::execute(&action, &evaluation.decision, "junction"), "blocked");
+        }
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+        assert!(!outside.join("missing.txt").exists());
+        std::fs::remove_dir(&junction).unwrap();
+        std::fs::remove_dir_all(&sandbox).unwrap();
+    }
 }

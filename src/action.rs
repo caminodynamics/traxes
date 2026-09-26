@@ -11,6 +11,40 @@ pub struct ProposedAction {
 
 pub type Parameters = serde_json::Value;
 
+/// Reject existing symlinks and Windows reparse points in the FILE_WRITE target
+/// path, including parent components. Windows junctions have regression coverage.
+/// This validation is not TOCTOU/race-safe if a path component can be concurrently
+/// replaced between validation and write. Trusted, non-concurrently-mutated parent
+/// directories are currently required.
+fn reject_redirected_path(path: &std::path::Path) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut current = std::path::PathBuf::new();
+    for component in absolute.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                let redirected = metadata.file_type().is_symlink();
+                #[cfg(windows)]
+                let redirected = {
+                    use std::os::windows::fs::MetadataExt;
+                    redirected || metadata.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT
+                };
+                if redirected {
+                    return Err(Error::new(ErrorKind::PermissionDenied, "FILE_WRITE path contains a symlink or reparse point"));
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// Single execution boundary for governance targets.
 /// This function contains ALL governance target side effects.
 /// Infrastructure operations (artifact generation, logging, policy loading, etc.) do NOT flow through this boundary.
@@ -63,8 +97,9 @@ pub fn execute(action: &ProposedAction, decision: &str, decision_id: &str) -> St
                 }
             };
 
-            // Perform the actual write to the requested target path
-            match std::fs::write(&target_path, content) {
+            // Check every existing component, including dangling target links.
+            match reject_redirected_path(std::path::Path::new(&target_path))
+                .and_then(|()| std::fs::write(&target_path, content)) {
                 Ok(_) => {
                     cli_utils::debug_log(format!(
                         "[ENFORCEMENT] FILE_WRITE executed successfully: {}",

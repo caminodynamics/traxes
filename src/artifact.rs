@@ -177,7 +177,21 @@ impl AuditArtifact {
         // Minimal compatibility: reproduce HEAD fingerprint semantics for the
         // canonical AWS `instance_type` case, otherwise use the generalized
         // (list-aware) composition that includes the observed parameter value.
-        let hash_input = if param_key == "instance_type" {
+        let hash_input = if action.tool == "FILE_WRITE" {
+            // Structured encoding binds all parameters (including path/content)
+            // without delimiter ambiguity. Keep legacy non-FILE_WRITE hashes.
+            serde_json::json!({
+                "fingerprint_version": "file_write_v1",
+                "decision_id": decision_id,
+                "action": action,
+                "decision": decision,
+                "reason": evaluation_result.reason,
+                "policy_bundle": POLICY_BUNDLE,
+                "field": evaluation_result.field,
+                "operator": evaluation_result.rule,
+                "policy_value": evaluation_result.policy_value
+            }).to_string()
+        } else if param_key == "instance_type" {
             // Reproduce HEAD composition exactly for instance_type.
             let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
             let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
