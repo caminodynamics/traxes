@@ -88,7 +88,7 @@ def main() -> None:
 
     print()
     print("PASS - external client can propose actions, but TRAXES controls execution.")
-    print("Next step: replace these hard-coded proposals with Gemini-generated proposals.")
+    print("This proof is model-agnostic: any agent can propose actions through the same boundary.")
 
 
 if __name__ == "__main__":
