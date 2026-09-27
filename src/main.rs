@@ -210,6 +210,7 @@ async fn main() {
             eprintln!("  --demo-mode     Compact terminal output");
             eprintln!("  --demo-mode=false  Verbose output");
             eprintln!("  --debug         Show debug logs");
+            eprintln!("  --policy <file> Load an explicit policy for server mode");
         } else {
             eprintln!("Traxes v0.2 - Deterministic Pre-Execution Evaluation Engine");
             eprintln!();
@@ -361,19 +362,39 @@ async fn main() {
                 println!("[Traxes] Async logger initialized");
             }
             
+            // Load the policy once, then use the same engine/hash for evaluation and artifacts.
+            let policy_path = args.iter().position(|arg| arg == "--policy").map(|idx| {
+                args.get(idx + 1).cloned().unwrap_or_else(|| {
+                    eprintln!("Error: --policy requires a policy file path");
+                    std::process::exit(1);
+                })
+            });
+            let engine = Arc::new(match policy_path {
+                Some(path) => {
+                    let yaml = policy_bundle::read_policy_yaml(&path).unwrap_or_else(|e| {
+                        eprintln!("Error: failed to read policy '{}': {}", path, e);
+                        std::process::exit(1);
+                    });
+                    if !cli_utils::is_demo_mode() {
+                        println!("[Traxes] Loaded policy: {}", path);
+                    }
+                    Engine::with_policy(yaml)
+                }
+                None => Engine::load_default_policies()
+                    .expect("Failed to load default policy bundle"),
+            });
+            let policy_hash = engine.policy_hash().to_string();
+
             // Initialize sharded event emitter (4 shards to reduce contention, total capacity: 1000)
             let shard_count = 4;
             let capacity_per_shard = 250;
-            let (event_emitter, event_receivers, event_counter) = artifact_emitter::create_sharded_event_channels(shard_count, capacity_per_shard);
-            
-            // Spawn artifact emitter workers (one per shard)
-            let policy_hash = Engine::load_default_policies()
-                .expect("Failed to load default policy bundle")
-                .policy_hash()
-                .to_string();
-            
+            let (event_emitter, event_receivers, event_counter) =
+                artifact_emitter::create_sharded_event_channels(shard_count, capacity_per_shard);
+
+            // Spawn artifact emitter workers (one per shard) with the active policy hash.
             for event_rx in event_receivers {
-                let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
+                let artifact_emitter =
+                    ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
                 tokio::spawn(async move {
                     artifact_emitter.run().await;
                 });
@@ -384,9 +405,6 @@ async fn main() {
                 println!("[Traxes] Artifact emitter workers spawned: {}", shard_count);
             }
 
-            let engine = Arc::new(
-                Engine::load_default_policies().expect("Failed to load default policy bundle"),
-            );
             let state = AppState {
                 event_emitter,
                 engine,

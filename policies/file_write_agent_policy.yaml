@@ -1,0 +1,6 @@
+target:
+  tool: FILE_WRITE
+rules:
+  - name: agent_demo_path_allowlist
+    condition: payload.proposed_action.parameters.path not in ["temp_executed_agent_allowed.txt"]
+    action: DENY
