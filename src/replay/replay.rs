@@ -64,7 +64,11 @@ impl ReplayEngine {
                 && artifact.rule_evaluation.operator == replay_decision.result.rule
                 && artifact.rule_evaluation.policy_value == replay_decision.result.policy_value
                 && artifact.sha256_hash == AuditArtifact::calculate_sha256_hash(
-                    &artifact.decision_id, &action, &replay_decision.decision, &replay_decision.result,
+                    &artifact.decision_id,
+                    &action,
+                    &replay_decision.decision,
+                    &replay_decision.result,
+                    &artifact.execution_status,
                 )
         } else {
             true // Preserve legacy AWS fingerprint/replay compatibility.

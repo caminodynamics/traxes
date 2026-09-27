@@ -170,6 +170,7 @@ impl AuditArtifact {
         action: &ProposedAction,
         decision: &str,
         evaluation_result: &EvaluationResult,
+        execution_status: &str,
     ) -> String {
         let env = &action.environment;
         let param_key = crate::server_policy::parameter_key(&evaluation_result.field);
@@ -185,6 +186,7 @@ impl AuditArtifact {
                 "decision_id": decision_id,
                 "action": action,
                 "decision": decision,
+                "execution_status": execution_status,
                 "reason": evaluation_result.reason,
                 "policy_bundle": POLICY_BUNDLE,
                 "field": evaluation_result.field,
@@ -257,8 +259,13 @@ impl AuditArtifact {
             String::new() // No reason needed for ALLOW decisions
         };
 
-        let sha256_hash =
-            Self::calculate_sha256_hash(decision_id, action, normalized_decision, evaluation_result);
+        let sha256_hash = Self::calculate_sha256_hash(
+            decision_id,
+            action,
+            normalized_decision,
+            evaluation_result,
+            &execution_status,
+        );
 
         let evaluation_expression = if cli_utils::is_demo_mode() {
             cli_utils::format_compact_rule(evaluation_result)

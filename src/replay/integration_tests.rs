@@ -36,7 +36,7 @@ fn test_file_write_fingerprint_replay_rejects_tampering_without_execution() {
     assert!(intact.match_status);
     assert_eq!(intact.replay_decision, "ALLOW");
     assert!(Verifier::verify(&intact, None).is_match());
-    for mutation in ["content", "path", "metadata", "session", "hash", "operator"] {
+    for mutation in ["content", "path", "metadata", "session", "hash", "operator", "execution_status"] {
         let mut changed = artifact.clone();
         match mutation {
             "content" => { changed.proposed_action.parameters.extra.insert("content".to_string(), json!("tampered bytes")); }
@@ -45,6 +45,7 @@ fn test_file_write_fingerprint_replay_rejects_tampering_without_execution() {
             "session" => changed.execution_context.session_id = "tampered-session".to_string(),
             "hash" => changed.sha256_hash = "invalid".to_string(),
             "operator" => changed.rule_evaluation.operator = "in_list".to_string(),
+            "execution_status" => changed.execution_status = "blocked".to_string(),
             _ => unreachable!(),
         }
         let result = replay.replay_from_artifact(&changed);
