@@ -184,8 +184,10 @@ fn print_request_demo(out: &RequestOutput<'_>) {
     }
     println!();
 
-    // CLI delay for artifact reveal
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // CLI delay for artifact reveal (skip in --demo-fast mode)
+    if !is_demo_fast() {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+    }
 
     // ARTIFACT SECTION
     println!("ARTIFACT");
