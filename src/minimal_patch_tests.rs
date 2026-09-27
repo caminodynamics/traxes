@@ -55,6 +55,8 @@ mod tests {
             }),
         };
         let policy2 = r#"
+target:
+  tool: aws_ec2_provision
 rules:
   - operator: numeric_lte
     condition_value: "100.00"
@@ -115,6 +117,8 @@ rules:
     #[test]
     fn test_file_write_allowed_path() {
         let policy = r#"
+target:
+  tool: FILE_WRITE
 rules:
   - operator: in_list
     field: payload.proposed_action.parameters.path
@@ -138,6 +142,8 @@ rules:
     #[test]
     fn test_file_write_denied_path() {
         let policy = r#"
+target:
+  tool: FILE_WRITE
 rules:
   - operator: in_list
     field: payload.proposed_action.parameters.path
@@ -161,6 +167,8 @@ rules:
     #[test]
     fn test_file_write_missing_path_deny() {
         let policy = r#"
+target:
+  tool: FILE_WRITE
 rules:
   - operator: in_list
     field: payload.proposed_action.parameters.path
@@ -198,6 +206,8 @@ rules:
     #[test]
     fn test_file_write_artifact_contains_path() {
         let policy = r#"
+target:
+  tool: FILE_WRITE
 rules:
   - operator: in_list
     field: payload.proposed_action.parameters.path
@@ -240,6 +250,8 @@ rules:
             }),
         };
         let policy = r#"
+target:
+  tool: FILE_WRITE
 rules:
   - name: path_limit
     condition: payload.proposed_action.parameters.path in ["/tmp/test.txt"]
@@ -398,7 +410,9 @@ rules:
         };
         // Build policy to allow only this target path
         let policy = format!(
-            r#"rules:
+            r#"target:
+  tool: FILE_WRITE
+rules:
   - name: path_limit
     condition: payload.proposed_action.parameters.path not in ["{}"]
     action: DENY
@@ -456,6 +470,8 @@ rules:
         };
 
         let policy = r#"
+target:
+  tool: FILE_WRITE
 rules:
   - name: path_limit
     condition: payload.proposed_action.parameters.path not in ["/etc/passwd"]
@@ -507,7 +523,7 @@ rules:
 
     #[test]
     fn test_file_write_hash_binds_content_and_metadata() {
-        let engine = Engine::with_policy("rules: []".to_string());
+        let engine = Engine::with_policy("target:\n  tool: FILE_WRITE\nrules: []".to_string());
         let action = ProposedAction {
             tool: "FILE_WRITE".to_string(),
             session_id: "session".to_string(),
@@ -616,7 +632,7 @@ rules:
         for name in ["victim.txt", "missing.txt"] {
             let path = junction.join(name).to_string_lossy().replace('\\', "/");
             let engine = Engine::with_policy(format!(
-                "rules:\n  - name: allowlist\n    condition: payload.proposed_action.parameters.path not in [\"{path}\"]\n    action: DENY\n"
+                "target:\n  tool: FILE_WRITE\nrules:\n  - name: allowlist\n    condition: payload.proposed_action.parameters.path not in [\"{path}\"]\n    action: DENY\n"
             ));
             let action = ProposedAction {
                 tool: "FILE_WRITE".to_string(), session_id: "junction".to_string(),

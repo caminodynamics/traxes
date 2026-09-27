@@ -90,6 +90,8 @@ fn test_replay_from_file() {
 fn test_replay_with_custom_policy() {
     // Create a custom policy with different threshold
     let custom_policy = r#"
+target:
+  tool: aws_ec2_provision
 rules:
   - operator: numeric_lte
     field: instance_cost_per_hour
@@ -460,6 +462,8 @@ fn test_replay_verification_mismatch() {
 
     // Create replay engine with different policy (higher threshold to flip decision)
     let custom_policy = r#"
+target:
+  tool: aws_ec2_provision
 rules:
   - operator: numeric_lte
     field: instance_cost_per_hour

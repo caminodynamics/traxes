@@ -2,7 +2,7 @@
 
 use crate::action::ProposedAction;
 use crate::cli_utils;
-use crate::policy_bundle::{evaluate_action_policy_with_rules, parse_policy_rules};
+use crate::policy_bundle::{evaluate_action_policy_with_rules, parse_policy_target_tool};
 use crate::server_policy::EvaluationResult;
 use sha2::{Digest, Sha256};
 use std::io;
@@ -39,6 +39,7 @@ pub struct PolicyBundle {
 #[derive(Debug, Clone)]
 pub struct Engine {
     bundle: PolicyBundle,
+    target_tool: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +86,7 @@ impl Engine {
             cli_utils::debug_log(format!("[Traxes] Parsed {} rules from policy", parsed_rules.len()));
         }
         Ok(Self {
+            target_tool: parse_policy_target_tool(&policy_yaml),
             bundle: PolicyBundle {
                 policy_yaml,
                 policy_hash,
@@ -97,6 +99,7 @@ impl Engine {
         let policy_hash = calculate_hash_from_content(&policy_yaml);
         let parsed_rules = crate::policy_bundle::parse_policy_rules(&policy_yaml);
         Self {
+            target_tool: parse_policy_target_tool(&policy_yaml),
             bundle: PolicyBundle {
                 policy_yaml,
                 policy_hash,
@@ -107,7 +110,7 @@ impl Engine {
 
     pub fn evaluate(&self, action: &ProposedAction) -> EvaluationDecision {
         let start = Instant::now();
-        let result = evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules);
+        let result = evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules, self.target_tool.as_deref());
         let evaluation_latency_us = start.elapsed().as_micros() as f64;
         let (decision, _): (&str, String) = cli_utils::normalize_decision(&result);
         EvaluationDecision {
@@ -120,7 +123,7 @@ impl Engine {
     /// Raw evaluation that directly calls evaluate_action_policy without any overhead.
     /// This is used for benchmarking to measure only the core evaluation logic.
     pub fn evaluate_raw(&self, action: &ProposedAction) -> EvaluationResult {
-        evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules)
+        evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules, self.target_tool.as_deref())
     }
 
     pub fn policy_hash(&self) -> &str {

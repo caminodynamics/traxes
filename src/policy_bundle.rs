@@ -33,6 +33,10 @@ pub fn normalize_policy_encoding(policy_content: &str, path: &str) -> String {
 
 
 pub fn evaluate_action_policy(action: &ProposedAction, policy_yaml: &str) -> EvaluationResult {
+    let target_tool = parse_policy_target_tool(policy_yaml);
+    if let Some(denial) = validate_policy_target(action, target_tool.as_deref()) {
+        return denial;
+    }
     let evaluator = PolicyEvaluator::new();
     let threshold_str = find_numeric_lte_threshold(policy_yaml);
 
@@ -50,6 +54,32 @@ pub fn evaluate_action_policy(action: &ProposedAction, policy_yaml: &str) -> Eva
 
     cli_utils::debug_log("[Traxes] No numeric_lte threshold found in policy; failing closed.");
     missing_threshold_result(action)
+}
+
+/// Missing, malformed, or empty targets cannot authorize any tool.
+pub(crate) fn parse_policy_target_tool(policy_yaml: &str) -> Option<String> {
+    let doc: YamlValue = serde_yaml::from_str(policy_yaml).ok()?;
+    let tool = doc.get("target")?.get("tool")?.as_str()?;
+    if tool.trim().is_empty() {
+        return None;
+    }
+    Some(tool.to_string())
+}
+
+fn validate_policy_target(action: &ProposedAction, target_tool: Option<&str>) -> Option<EvaluationResult> {
+    if target_tool.is_some_and(|tool| !tool.trim().is_empty() && tool == action.tool) {
+        return None;
+    }
+    Some(EvaluationResult {
+        action: Some("DENY".to_string()),
+        field: "proposed_action.tool".to_string(),
+        rule: "target_tool_match".to_string(),
+        observed_value: 0.0,
+        observed_value_str: action.tool.clone(),
+        policy_value: 0.0,
+        evaluation_expression: "proposed_action.tool == policy.target.tool".to_string(),
+        reason: "POLICY_TARGET_MISSING_OR_MISMATCH".to_string(),
+    })
 }
 
 /// Parse policy rules from YAML during engine initialization
@@ -81,8 +111,12 @@ pub fn parse_policy_rules(policy_yaml: &str) -> Vec<ParsedRule> {
     rules
 }
 
-/// Evaluate action using pre-parsed rules (hot path)
-pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: &[ParsedRule]) -> EvaluationResult {
+/// Evaluate action using pre-parsed rules and their policy target (hot path).
+/// Target matching is mandatory and precedes every rule evaluation.
+pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: &[ParsedRule], target_tool: Option<&str>) -> EvaluationResult {
+    if let Some(denial) = validate_policy_target(action, target_tool) {
+        return denial;
+    }
     let evaluator = PolicyEvaluator::new();
     
     // Try numeric_lte rules first
@@ -387,7 +421,114 @@ fn find_list_rule_from_yaml(policy_yaml: &str) -> Option<(String, Vec<String>, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::traxes_engine::Engine;
+    use serde_json::json;
     use std::path::Path;
+
+    fn action(tool: &str) -> ProposedAction {
+        ProposedAction {
+            tool: tool.to_string(),
+            session_id: "target-binding".to_string(),
+            environment: "staging".to_string(),
+            parameters: json!({
+                "instance_type": "t3.small",
+                "path": "allowed.txt",
+                "content": "must be governed"
+            }),
+        }
+    }
+
+    // Exercise all policy-level evaluation entry points, including the raw path.
+    fn assert_decision(policy: &str, action: &ProposedAction, expected: &str) {
+        let engine = Engine::with_policy(policy.to_string());
+        assert_eq!(engine.evaluate(action).decision, expected);
+        let rules = parse_policy_rules(policy);
+        let target = parse_policy_target_tool(policy);
+        for result in [
+            engine.evaluate_raw(action),
+            evaluate_action_policy(action, policy),
+            evaluate_action_policy_with_rules(action, &rules, target.as_deref()),
+        ] {
+            assert_eq!(cli_utils::normalize_decision(&result).0, expected);
+        }
+    }
+
+    #[test]
+    fn matching_aws_target_preserves_allow() {
+        assert_decision(crate::traxes_engine::DEFAULT_POLICY_YAML, &action("aws_ec2_provision"), "ALLOW");
+    }
+
+    #[test]
+    fn aws_target_rejects_file_write_with_allowed_aws_parameters() {
+        let policy = crate::traxes_engine::DEFAULT_POLICY_YAML;
+        let action = action("FILE_WRITE");
+        assert_decision(policy, &action, "DENY");
+        assert_eq!(Engine::with_policy(policy.to_string()).evaluate(&action).result.reason,
+            "POLICY_TARGET_MISSING_OR_MISMATCH");
+    }
+
+    #[test]
+    fn matching_file_write_target_preserves_path_allowlist() {
+        let policy = r#"target:
+  tool: FILE_WRITE
+rules:
+  - name: path_allowlist
+    condition: payload.proposed_action.parameters.path not in ["allowed.txt"]
+    action: DENY
+"#;
+        let mut action = action("FILE_WRITE");
+        assert_decision(policy, &action, "ALLOW");
+        action.parameters["path"] = json!("forbidden.txt");
+        assert_decision(policy, &action, "DENY");
+        action.parameters["path"] = json!("allowed.txt");
+        action.tool = "aws_ec2_provision".to_string();
+        assert_decision(policy, &action, "DENY");
+    }
+
+    #[test]
+    fn missing_invalid_or_mismatched_targets_fail_closed() {
+        let rules = r#"rules:
+  - name: allowlist
+    condition: payload.proposed_action.parameters.instance_type not in ["t3.small"]
+    action: DENY
+"#;
+        for target in [
+            "", "target: null\n", "target: {}\n", "target: FILE_WRITE\n",
+            "target: {tool: null}\n", "target: {tool: 42}\n",
+            "target: {tool: []}\n", "target: {tool: ''}\n", "target: {tool: '   '}\n",
+            "target: {tool: unrelated}\n",
+        ] {
+            let policy = format!("{target}{rules}");
+            for tool in ["FILE_WRITE", "aws_ec2_provision"] {
+                assert_decision(&policy, &action(tool), "DENY");
+            }
+        }
+        // Tool matching is exact, with no case folding or whitespace aliases.
+        for tool in ["", "AWS_EC2_PROVISION", "aws_ec2_provision "] {
+            assert_decision(crate::traxes_engine::DEFAULT_POLICY_YAML, &action(tool), "DENY");
+        }
+        assert_decision("target: [invalid yaml", &action("FILE_WRITE"), "DENY");
+    }
+
+    #[test]
+    fn tool_mismatch_cannot_create_or_overwrite_file() {
+        let sandbox = std::env::temp_dir().join(format!("traxes-target-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&sandbox).unwrap();
+        let existing = sandbox.join("existing.txt");
+        let missing = sandbox.join("missing.txt");
+        std::fs::write(&existing, "untouched").unwrap();
+        let engine = Engine::load_default_policies().unwrap();
+        for path in [&existing, &missing] {
+            let mut action = action("FILE_WRITE");
+            action.parameters["path"] = json!(path);
+            let decision = engine.evaluate(&action);
+            assert_eq!(decision.decision, "DENY");
+            assert_eq!(crate::action::execute(&action, &decision.decision, "target-mismatch"), "blocked");
+        }
+        assert_eq!(std::fs::read_to_string(&existing).unwrap(), "untouched");
+        assert!(!missing.exists());
+        std::fs::remove_dir_all(&sandbox).unwrap();
+    }
 
     #[test]
     fn loads_policy_from_repo_relative_path() {
