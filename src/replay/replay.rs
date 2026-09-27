@@ -32,7 +32,7 @@ pub struct EvaluationDetails {
 }
 
 pub struct ReplayEngine {
-    engine: Engine,
+    pub engine: Engine,
 }
 
 impl ReplayEngine {
@@ -55,13 +55,31 @@ impl ReplayEngine {
         // Re-evaluate using the same engine
         let replay_decision = self.engine.evaluate(&action);
 
-        // Compare with original decision
-        let match_status = policy_hash_matches && (artifact.decision == replay_decision.decision);
+        // FILE_WRITE replay must bind the audited bytes, even when changing them
+        // would leave the policy decision unchanged. Never execute the action.
+        let fingerprint_matches = if action.tool == "FILE_WRITE" || artifact.tool == "FILE_WRITE" {
+            action.tool == artifact.tool
+                && action.environment == artifact.environment
+                && artifact.rule_evaluation.field == replay_decision.result.field
+                && artifact.rule_evaluation.operator == replay_decision.result.rule
+                && artifact.rule_evaluation.policy_value == replay_decision.result.policy_value
+                && artifact.sha256_hash == AuditArtifact::calculate_sha256_hash(
+                    &artifact.decision_id,
+                    &action,
+                    &replay_decision.decision,
+                    &replay_decision.result,
+                    &artifact.execution_status,
+                )
+        } else {
+            true // Preserve legacy AWS fingerprint/replay compatibility.
+        };
+        let match_status = policy_hash_matches && fingerprint_matches
+            && (artifact.decision == replay_decision.decision);
 
         // Extract evaluation details
         let evaluation_details = EvaluationDetails {
             original_observed_value: artifact.rule_evaluation.observed_value.clone(),
-            replay_observed_value: if artifact.rule_evaluation.field.contains("instance_type") {
+            replay_observed_value: if crate::server_policy::is_string_operator(&replay_decision.result.rule) {
                 replay_decision.result.observed_value_str.clone().into()
             } else {
                 serde_json::Number::from_f64(replay_decision.result.observed_value)
@@ -105,14 +123,27 @@ impl ReplayEngine {
     }
 
     pub fn reconstruct_action(&self, artifact: &AuditArtifact) -> ProposedAction {
+        let mut parameters = serde_json::json!({});
+        if let Some(obj) = parameters.as_object_mut() {
+            if let Some(ref it) = artifact.proposed_action.parameters.instance_type {
+                obj.insert("instance_type".to_string(), serde_json::Value::String(it.clone()));
+            }
+            if let Some(icph) = artifact.proposed_action.parameters.instance_cost_per_hour {
+                obj.insert("instance_cost_per_hour".to_string(), serde_json::json!(icph));
+            }
+            if let Some(ref p) = artifact.proposed_action.parameters.path {
+                obj.insert("path".to_string(), serde_json::Value::String(p.clone()));
+            }
+            for (k, v) in &artifact.proposed_action.parameters.extra {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+
         ProposedAction {
             tool: artifact.proposed_action.tool.clone(),
             session_id: artifact.execution_context.session_id.clone(),
             environment: artifact.proposed_action.environment.clone(),
-            parameters: serde_json::json!({
-                "instance_type": artifact.proposed_action.parameters.instance_type,
-                "instance_cost_per_hour": artifact.proposed_action.parameters.instance_cost_per_hour
-            }),
+            parameters,
         }
     }
 
@@ -209,8 +240,10 @@ mod tests {
                 tool: "aws_ec2_provision".to_string(),
                 environment: "staging".to_string(),
                 parameters: crate::artifact::ActionParameters {
-                    instance_type: "t3.medium".to_string(),
-                    instance_cost_per_hour: 1.50,
+                    instance_type: Some("t3.medium".to_string()),
+                    instance_cost_per_hour: Some(1.50),
+                    path: None,
+                    extra: std::collections::HashMap::new(),
                 },
             },
             rule_evaluation: crate::artifact::RuleEvaluationInfo {

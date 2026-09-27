@@ -153,7 +153,7 @@ impl ExecutionEvent {
                 None
             },
             field: self.rule_trace.field.clone(),
-            rule: self.rule_trace.rule_id.clone(),
+            rule: self.rule_trace.operator.clone(),
             observed_value: self.rule_trace.observed_value.clone().parse().unwrap_or(0.0),
             observed_value_str: self.rule_trace.observed_value.clone(),
             policy_value: self.policy_value,

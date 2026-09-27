@@ -90,8 +90,8 @@ impl Verifier {
         // Check if observed values are within tolerance
         let details = &replay_result.evaluation_details;
         
-        // For numeric fields, check tolerance
-        if !details.field.contains("instance_type") {
+        // Numeric tolerance does not apply to textual rule evidence.
+        if !crate::server_policy::is_string_operator(&details.rule) {
             let original_val = details.original_observed_value.as_f64().unwrap_or(0.0);
             let replay_val = details.replay_observed_value.as_f64().unwrap_or(0.0);
             

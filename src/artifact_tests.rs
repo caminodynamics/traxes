@@ -92,7 +92,7 @@ mod artifact_schema_tests {
     #[test]
     fn test_artifact_v2_schema() {
         let engine = Engine::load_default_policies().unwrap();
-        
+
         let action = ProposedAction {
             tool: "aws_ec2_provision".to_string(),
             session_id: "test-session".to_string(),
@@ -140,7 +140,7 @@ mod artifact_schema_tests {
     #[test]
     fn test_artifact_serialization_roundtrip() {
         let engine = Engine::load_default_policies().unwrap();
-        
+
         let action = ProposedAction {
             tool: "aws_ec2_provision".to_string(),
             session_id: "test-session".to_string(),
@@ -162,7 +162,7 @@ mod artifact_schema_tests {
 
         // Serialize
         let serialized = serde_json::to_string(&artifact).unwrap();
-        
+
         // Deserialize
         let deserialized: AuditArtifact = serde_json::from_str(&serialized).unwrap();
 
@@ -174,6 +174,136 @@ mod artifact_schema_tests {
         assert_eq!(artifact.governance_info, deserialized.governance_info);
         assert_eq!(artifact.rules_evaluated, deserialized.rules_evaluated);
         assert_eq!(artifact.evaluation_trace, deserialized.evaluation_trace);
+    }
+
+    #[test]
+    fn test_instance_type_hash_compat() {
+        use sha2::{Sha256, Digest};
+        // Construct a synthetic action and evaluation that mimic the HEAD inputs
+        let action = ProposedAction {
+            tool: "AWS_RDS_PROVISION".to_string(),
+            session_id: "stress-test-session-001".to_string(),
+            environment: "staging".to_string(),
+            parameters: json!({
+                "instance_type": "t3.micro",
+                "instance_cost_per_hour": 0.015
+            }),
+        };
+
+        let eval_result = crate::server_policy::EvaluationResult {
+            action: Some("DENY".to_string()),
+            field: "proposed_action.parameters.instance_type".to_string(),
+            rule: "not_in".to_string(),
+            observed_value: 0.015,
+            observed_value_str: "t3.micro".to_string(),
+            policy_value: 0.0,
+            evaluation_expression: "".to_string(),
+            reason: "instance_type is not allowed for this environment".to_string(),
+        };
+
+        let evaluation = crate::traxes_engine::EvaluationDecision {
+            result: eval_result.clone(),
+            decision: "ALLOW".to_string(),
+            evaluation_latency_us: 1.0,
+        };
+
+        let decision_id = "dec_demo_C3899A05";
+        let artifact = crate::artifact::ArtifactLogger::generate_artifact(
+            decision_id,
+            &action,
+            &evaluation,
+            "policy-hash".to_string().as_str(),
+            "executed".to_string(),
+        );
+
+        // Recompute expected HEAD-style hash input (exact composition reproduced)
+        let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let normalized_decision = crate::cli_utils::normalize_decision(&evaluation.result).0;
+        let expected_input = format!(
+            "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            decision_id,
+            action.tool,
+            action.session_id,
+            action.environment,
+            instance_type,
+            cost_per_hour,
+            normalized_decision,
+            &evaluation.result.reason,
+            "infra-cost-limit-v1",
+            evaluation.result.field,
+            evaluation.result.observed_value,
+            "<=",
+            evaluation.result.policy_value
+        );
+
+        let mut hasher = Sha256::new();
+        hasher.update(expected_input.as_bytes());
+        let expected_hash = format!("{:x}", hasher.finalize());
+
+        assert_eq!(artifact.sha256_hash, expected_hash);
+    }
+
+    #[test]
+    fn test_file_write_path_in_hash() {
+        use sha2::{Sha256, Digest};
+        // Synthetic FILE_WRITE action and evaluation
+        let action = ProposedAction {
+            tool: "file_write_tool".to_string(),
+            session_id: "session-xyz".to_string(),
+            environment: "prod".to_string(),
+            parameters: json!({
+                "path": "/tmp/mine.txt"
+            }),
+        };
+
+        let eval_result = crate::server_policy::EvaluationResult {
+            action: Some("DENY".to_string()),
+            field: "proposed_action.parameters.path".to_string(),
+            rule: "not_in".to_string(),
+            observed_value: 0.0,
+            observed_value_str: "/tmp/mine.txt".to_string(),
+            policy_value: 0.0,
+            evaluation_expression: "".to_string(),
+            reason: "FILE_WRITE_VIOLATION".to_string(),
+        };
+
+        let evaluation = crate::traxes_engine::EvaluationDecision {
+            result: eval_result.clone(),
+            decision: "DENY".to_string(),
+            evaluation_latency_us: 1.0,
+        };
+
+        let decision_id = "decision-456";
+        let artifact = crate::artifact::ArtifactLogger::generate_artifact(
+            decision_id,
+            &action,
+            &evaluation,
+            "policy-hash".to_string().as_str(),
+            "executed".to_string(),
+        );
+
+        // Expected working-tree-style hash input where observed_val_str is JSON-serialized value
+        let observed_val_str = action.parameters.get("path").map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string());
+        let normalized_decision = crate::cli_utils::normalize_decision(&evaluation.result).0;
+        let expected_input = format!(
+            "{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            decision_id,
+            action.tool,
+            action.session_id,
+            action.environment,
+            observed_val_str,
+            normalized_decision,
+            &evaluation.result.reason,
+            "infra-cost-limit-v1",
+            evaluation.result.field,
+        );
+
+        let mut hasher = Sha256::new();
+        hasher.update(expected_input.as_bytes());
+        let expected_hash = format!("{:x}", hasher.finalize());
+
+        assert_eq!(artifact.sha256_hash, expected_hash);
     }
 }
 
