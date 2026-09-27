@@ -165,7 +165,7 @@ impl AuditArtifact {
         None
     }
 
-    fn calculate_sha256_hash(
+    pub(crate) fn calculate_sha256_hash(
         decision_id: &str,
         action: &ProposedAction,
         decision: &str,
@@ -298,8 +298,8 @@ impl AuditArtifact {
         let rule_evaluation = RuleEvaluationInfo {
             rule_id: "infra-cost-limit".to_string(),
             field: evaluation_result.field.clone(),
-            // Use operator-based classification: list operators (in_list, not_in) use string values
-            observed_value: if crate::server_policy::is_list_operator(&evaluation_result.rule) {
+            // List and tool-target comparisons retain their textual evidence.
+            observed_value: if crate::server_policy::is_string_operator(&evaluation_result.rule) {
                 serde_json::Value::String(evaluation_result.observed_value_str.clone())
             } else {
                 serde_json::Value::Number(serde_json::Number::from_f64(evaluation_result.observed_value).unwrap_or(serde_json::Number::from(0)))

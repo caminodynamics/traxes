@@ -30,6 +30,11 @@ pub fn is_list_operator(op: &str) -> bool {
     op == "not_in" || op == "in_list"
 }
 
+/// Operators whose observed evidence is textual rather than numeric.
+pub(crate) fn is_string_operator(op: &str) -> bool {
+    is_list_operator(op) || op == "target_tool_match"
+}
+
 pub struct Rule {
     pub operator: String,
     pub field: String,

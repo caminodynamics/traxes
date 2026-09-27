@@ -55,13 +55,27 @@ impl ReplayEngine {
         // Re-evaluate using the same engine
         let replay_decision = self.engine.evaluate(&action);
 
-        // Compare with original decision
-        let match_status = policy_hash_matches && (artifact.decision == replay_decision.decision);
+        // FILE_WRITE replay must bind the audited bytes, even when changing them
+        // would leave the policy decision unchanged. Never execute the action.
+        let fingerprint_matches = if action.tool == "FILE_WRITE" || artifact.tool == "FILE_WRITE" {
+            action.tool == artifact.tool
+                && action.environment == artifact.environment
+                && artifact.rule_evaluation.field == replay_decision.result.field
+                && artifact.rule_evaluation.operator == replay_decision.result.rule
+                && artifact.rule_evaluation.policy_value == replay_decision.result.policy_value
+                && artifact.sha256_hash == AuditArtifact::calculate_sha256_hash(
+                    &artifact.decision_id, &action, &replay_decision.decision, &replay_decision.result,
+                )
+        } else {
+            true // Preserve legacy AWS fingerprint/replay compatibility.
+        };
+        let match_status = policy_hash_matches && fingerprint_matches
+            && (artifact.decision == replay_decision.decision);
 
         // Extract evaluation details
         let evaluation_details = EvaluationDetails {
             original_observed_value: artifact.rule_evaluation.observed_value.clone(),
-            replay_observed_value: if crate::server_policy::is_list_operator(&artifact.rule_evaluation.operator) {
+            replay_observed_value: if crate::server_policy::is_string_operator(&replay_decision.result.rule) {
                 replay_decision.result.observed_value_str.clone().into()
             } else {
                 serde_json::Number::from_f64(replay_decision.result.observed_value)

@@ -21,6 +21,12 @@ num_cpus = "1.16"
 dhat = { version = "0.3", optional = true }
 clap = { version = "4.6.1", features = ["derive"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Security"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = []
 instrumentation = ["dhat"]

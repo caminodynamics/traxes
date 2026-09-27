@@ -7,6 +7,98 @@ use std::fs;
 use uuid::Uuid;
 
 #[test]
+fn test_file_write_fingerprint_replay_rejects_tampering_without_execution() {
+    let sandbox = std::env::temp_dir().join(format!("traxes-replay-integrity-{}", Uuid::new_v4()));
+    fs::create_dir(&sandbox).unwrap();
+    let original_path = sandbox.join("original.txt");
+    let alternate_path = sandbox.join("also-allowed.txt");
+    let original = original_path.to_string_lossy().replace('\\', "/");
+    let alternate = alternate_path.to_string_lossy().replace('\\', "/");
+    // Both paths ALLOW: rejection of the modified path must come from integrity,
+    // not from a changed policy decision.
+    let engine = Engine::with_policy(format!(
+        "target:\n  tool: FILE_WRITE\nrules:\n  - name: paths\n    condition: payload.proposed_action.parameters.path not in [\"{original}\", \"{alternate}\"]\n    action: DENY\n"
+    ));
+    let action = ProposedAction {
+        tool: "FILE_WRITE".to_string(), session_id: "integrity".to_string(),
+        environment: "sandbox".to_string(),
+        parameters: json!({"path": original, "content": "audited bytes", "metadata": {"owner": "test"}}),
+    };
+    let evaluation = engine.evaluate(&action);
+    assert_eq!(evaluation.decision, "ALLOW");
+    let artifact = ArtifactLogger::generate_artifact(
+        "integrity-id", &action, &evaluation, engine.policy_hash(), "executed".to_string(),
+    );
+    // Exercise the serialized artifact representation, too.
+    let artifact: AuditArtifact = serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
+    let replay = ReplayEngine::new(engine);
+    let intact = replay.replay_from_artifact(&artifact);
+    assert!(intact.match_status);
+    assert_eq!(intact.replay_decision, "ALLOW");
+    assert!(Verifier::verify(&intact, None).is_match());
+    for mutation in ["content", "path", "metadata", "session", "hash", "operator"] {
+        let mut changed = artifact.clone();
+        match mutation {
+            "content" => { changed.proposed_action.parameters.extra.insert("content".to_string(), json!("tampered bytes")); }
+            "path" => changed.proposed_action.parameters.path = Some(alternate.clone()),
+            "metadata" => { changed.proposed_action.parameters.extra.insert("metadata".to_string(), json!({"owner": "attacker"})); }
+            "session" => changed.execution_context.session_id = "tampered-session".to_string(),
+            "hash" => changed.sha256_hash = "invalid".to_string(),
+            "operator" => changed.rule_evaluation.operator = "in_list".to_string(),
+            _ => unreachable!(),
+        }
+        let result = replay.replay_from_artifact(&changed);
+        assert_eq!(result.replay_decision, "ALLOW", "{mutation}");
+        assert!(!result.match_status, "must reject modified {mutation}");
+        assert!(Verifier::verify(&result, None).is_mismatch());
+        assert!(Verifier::verify_with_tolerance(&result, 1.0).is_mismatch());
+    }
+    assert!(!original_path.exists(), "replay must never create the original target");
+    assert!(!alternate_path.exists(), "replay must never create the altered target");
+    fs::remove_dir(&sandbox).unwrap();
+}
+
+#[test]
+fn test_target_mismatch_string_evidence_survives_async_artifact_and_replay() {
+    let engine = Engine::load_default_policies().unwrap();
+    let action = ProposedAction {
+        tool: "FILE_WRITE".to_string(), session_id: "mismatch-evidence".to_string(),
+        environment: "staging".to_string(),
+        parameters: json!({"path": "never-created.txt", "content": "blocked", "instance_type": "t3.small"}),
+    };
+    let evaluation = engine.evaluate(&action);
+    assert_eq!(evaluation.decision, "DENY");
+    let sync = ArtifactLogger::generate_artifact(
+        "mismatch-id", &action, &evaluation, engine.policy_hash(), "blocked".to_string(),
+    );
+    let event = crate::execution_event::ExecutionEvent::from_record(crate::traxes_engine::DecisionRecord {
+        decision: evaluation.decision.clone(), session_id: action.session_id.clone(),
+        tool: action.tool.clone(), environment: action.environment.clone(),
+        parameters: action.parameters.clone(), policy_hash: engine.policy_hash().to_string(),
+        evaluation_result: evaluation.result.clone(), evaluation_latency_us: evaluation.evaluation_latency_us,
+        decision_id: "mismatch-id".to_string(), trace_id: "trace".to_string(),
+        execution_status: "blocked".to_string(),
+    });
+    let (_, rx) = tokio::sync::mpsc::channel(1);
+    let emitter = crate::artifact_emitter::ArtifactEmitter::new(
+        rx, engine.policy_hash().to_string(), std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+    );
+    let queued = emitter.event_to_artifact(event).unwrap();
+    let replay = ReplayEngine::new(engine);
+    for artifact in [sync, queued] {
+        assert_eq!(artifact.rule_evaluation.operator, "target_tool_match");
+        assert_eq!(artifact.rule_evaluation.observed_value, json!("FILE_WRITE"));
+        assert_eq!(artifact.rules_evaluated.as_ref().unwrap()[0].observed_value, json!("FILE_WRITE"));
+        let artifact: AuditArtifact = serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
+        let result = replay.replay_from_artifact(&artifact);
+        assert!(result.match_status);
+        assert_eq!(result.replay_decision, "DENY");
+        assert_eq!(result.evaluation_details.original_observed_value, json!("FILE_WRITE"));
+        assert_eq!(result.evaluation_details.replay_observed_value, json!("FILE_WRITE"));
+    }
+}
+
+#[test]
 fn test_end_to_end_replay_match() {
     // Setup: Create an engine and evaluate an action
     let engine = Engine::load_default_policies().unwrap();
