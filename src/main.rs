@@ -10,6 +10,7 @@ struct Cli {
     #[arg(long)]
     request: String,
 }
+use crate::artifact::ArtifactLogger;
 use axum::{
     extract::{Json, State},
     http::StatusCode,
@@ -18,7 +19,6 @@ use axum::{
     Router,
 };
 use chrono::Utc;
-use crate::artifact::ArtifactLogger;
 use serde::Serialize;
 use serde_json;
 use std::env;
@@ -26,8 +26,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use uuid::Uuid;
 use traxes_demo::async_logger;
+use uuid::Uuid;
 
 fn write_artifact_on_exit<T: Serialize>(context: &T) {
     let json_result = serde_json::to_string_pretty(context);
@@ -37,7 +37,10 @@ fn write_artifact_on_exit<T: Serialize>(context: &T) {
                 cli_utils::debug_log(format!("[Traxes] Failed to create logs directory: {}", e));
             }
             if let Err(e) = std::fs::write("logs/artifact_latest.json", json_content) {
-                cli_utils::debug_log(format!("[Traxes] Failed to write artifact_latest.json: {}", e));
+                cli_utils::debug_log(format!(
+                    "[Traxes] Failed to write artifact_latest.json: {}",
+                    e
+                ));
             }
         }
         Err(e) => {
@@ -71,67 +74,81 @@ mod coverage;
 mod evaluate;
 mod execution_event;
 mod policy_bundle;
-mod traxes_engine;
 mod server_policy;
+mod traxes_engine;
 
 mod cli_layer;
 
 use crate::action::ProposedAction;
 use crate::artifact_emitter::{ArtifactEmitter, EventEmitter};
+use crate::coverage::{load_coverage_policy, CoverageTracker};
 use crate::traxes_engine::Engine;
-use crate::coverage::{CoverageTracker, load_coverage_policy};
 
 fn show_latest_artifact(raw_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
     let artifacts_dir = std::path::Path::new("artifacts");
-    
+
     // Check if artifacts directory exists
     if !artifacts_dir.exists() {
         println!("No artifacts found");
         return Ok(());
     }
-    
+
     // Scan directory for JSON files and sort by modification time
-    let mut json_files: Vec<(std::path::PathBuf, std::time::SystemTime)> = std::fs::read_dir(artifacts_dir)?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "json"))
-        .filter_map(|entry| {
-            let path = entry.path();
-            let metadata = path.metadata().ok()?;
-            let modified = metadata.modified().ok()?;
-            Some((path, modified))
-        })
-        .collect();
-    
+    let mut json_files: Vec<(std::path::PathBuf, std::time::SystemTime)> =
+        std::fs::read_dir(artifacts_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "json"))
+            .filter_map(|entry| {
+                let path = entry.path();
+                let metadata = path.metadata().ok()?;
+                let modified = metadata.modified().ok()?;
+                Some((path, modified))
+            })
+            .collect();
+
     if json_files.is_empty() {
         println!("No artifacts found");
         return Ok(());
     }
-    
+
     // Sort by modification time (descending) to get most recent
     json_files.sort_by(|a, b| b.1.cmp(&a.1));
-    
+
     let (latest_path, _) = &json_files[0];
-    
+
     // Read file contents
     let content = std::fs::read_to_string(latest_path)?;
-    
+
     if raw_mode {
         // Raw mode: print full JSON exactly as stored
         println!("{}", content);
     } else {
         // Human-readable mode: parse and format
         let artifact: serde_json::Value = serde_json::from_str(&content)?;
-        
-        let decision = artifact.get("decision").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-        let reason = artifact.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-        let tool = artifact.get("tool").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let environment = artifact.get("environment").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let trace_id = artifact.get("execution_context")
+
+        let decision = artifact
+            .get("decision")
+            .and_then(|v| v.as_str())
+            .unwrap_or("UNKNOWN");
+        let reason = artifact
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let tool = artifact
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let environment = artifact
+            .get("environment")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let trace_id = artifact
+            .get("execution_context")
             .and_then(|ctx| ctx.get("trace_id"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let artifact_path = latest_path.display();
-        
+
         println!("LATEST ARTIFACT");
         println!("──────────────────────────────");
         println!("decision: {}", decision);
@@ -144,7 +161,7 @@ fn show_latest_artifact(raw_mode: bool) -> Result<(), Box<dyn std::error::Error>
         println!("artifact_path: {}", artifact_path);
         println!("──────────────────────────────");
     }
-    
+
     Ok(())
 }
 
@@ -167,14 +184,14 @@ struct AppState {
     engine: Arc<Engine>,
 }
 
-
 #[tokio::main]
 async fn main() {
     let raw_args: Vec<String> = env::args().collect();
     let explicit_demo_off = raw_args.iter().any(|a| a == "--demo-mode=false");
     let demo_fast = raw_args.iter().any(|a| a == "--demo-fast");
     let dev_mode = raw_args.iter().any(|a| a == "--dev");
-    let (mut demo_mode, debug_mode, args): (bool, bool, Vec<String>) = cli_utils::parse_demo_flags(raw_args.iter().filter(|a| *a != "--dev").cloned().collect());
+    let (mut demo_mode, debug_mode, args): (bool, bool, Vec<String>) =
+        cli_utils::parse_demo_flags(raw_args.iter().filter(|a| *a != "--dev").cloned().collect());
 
     if args.len() >= 2 && args[1] == "evaluate" && !explicit_demo_off {
         demo_mode = true;
@@ -251,36 +268,45 @@ async fn main() {
             cli::demo::run_async().await;
             return;
         }
-        "benchmark" => {
-            match evaluate::run_benchmark(&args) {
-                Ok(_) => {
-                    println!("Benchmark completed successfully");
-                }
-                Err(e) => {
-                    let error_message = if e.to_string().contains("cannot find the file") {
-                        "File not found".to_string()
-                    } else if e.to_string().contains("parse") {
-                        "Invalid payload format".to_string()
-                    } else {
-                        "System error".to_string()
-                    };
-                    eprintln!("error: {}", error_message);
-                    eprintln!("details: {:?}", e);
-                    let error_ctx = ErrorContext {
-                        error_type: "SYSTEM_ERROR".to_string(),
-                        message: error_message,
-                        timestamp: Utc::now().to_rfc3339(),
-                    };
-                    write_artifact_on_exit(&error_ctx);
-                    std::process::exit(1);
-                }
+        "benchmark" => match evaluate::run_benchmark(&args) {
+            Ok(_) => {
+                println!("Benchmark completed successfully");
             }
-        }
+            Err(e) => {
+                let error_message = if e.to_string().contains("cannot find the file") {
+                    "File not found".to_string()
+                } else if e.to_string().contains("parse") {
+                    "Invalid payload format".to_string()
+                } else {
+                    "System error".to_string()
+                };
+                eprintln!("error: {}", error_message);
+                eprintln!("details: {:?}", e);
+                let error_ctx = ErrorContext {
+                    error_type: "SYSTEM_ERROR".to_string(),
+                    message: error_message,
+                    timestamp: Utc::now().to_rfc3339(),
+                };
+                write_artifact_on_exit(&error_ctx);
+                std::process::exit(1);
+            }
+        },
         // Developer-only commands (require --dev flag)
-        "server" | "evaluate" | "show-latest-artifact" | "artifacts" | "replay" | "status" | "coverage" | "load-test" | "reliability" => {
+        "server"
+        | "evaluate"
+        | "show-latest-artifact"
+        | "artifacts"
+        | "replay"
+        | "status"
+        | "coverage"
+        | "load-test"
+        | "reliability" => {
             if !dev_mode {
                 eprintln!("Error: '{}' is a developer command", args[1]);
-                eprintln!("Use 'traxes-demo --dev {}' to access developer tools", args[1]);
+                eprintln!(
+                    "Use 'traxes-demo --dev {}' to access developer tools",
+                    args[1]
+                );
                 eprintln!();
                 eprintln!("For public commands, use: demo, eval, benchmark");
                 eprintln!("Run 'traxes-demo' for usage information");
@@ -353,15 +379,15 @@ async fn main() {
             // Initialize async logging queue (capacity: 1000 log messages)
             let (async_log_sender, async_log_rx) = async_logger::create_async_log_channel(1000);
             async_logger::init_global_async_logger(async_log_sender);
-            
+
             // Spawn async logger worker
             let async_logger_worker = async_logger::AsyncLogger::new(async_log_rx);
             tokio::spawn(async_logger_worker.run());
-            
+
             if !cli_utils::is_demo_mode() {
                 println!("[Traxes] Async logger initialized");
             }
-            
+
             // Load the policy once, then use the same engine/hash for evaluation and artifacts.
             let policy_path = args.iter().position(|arg| arg == "--policy").map(|idx| {
                 args.get(idx + 1).cloned().unwrap_or_else(|| {
@@ -380,8 +406,9 @@ async fn main() {
                     }
                     Engine::with_policy(yaml)
                 }
-                None => Engine::load_default_policies()
-                    .expect("Failed to load default policy bundle"),
+                None => {
+                    Engine::load_default_policies().expect("Failed to load default policy bundle")
+                }
             });
             let policy_hash = engine.policy_hash().to_string();
 
@@ -401,7 +428,10 @@ async fn main() {
             }
 
             if !cli_utils::is_demo_mode() {
-                println!("[Traxes] Sharded event emitter initialized: {} shards, {} capacity per shard", shard_count, capacity_per_shard);
+                println!(
+                    "[Traxes] Sharded event emitter initialized: {} shards, {} capacity per shard",
+                    shard_count, capacity_per_shard
+                );
                 println!("[Traxes] Artifact emitter workers spawned: {}", shard_count);
             }
 
@@ -421,7 +451,10 @@ async fn main() {
                 .await
                 .expect("Failed to bind to address");
             if cli_utils::is_demo_mode() {
-                println!("Traxes demo server → http://{}/evaluate  (--demo-mode)", bind_address);
+                println!(
+                    "Traxes demo server → http://{}/evaluate  (--demo-mode)",
+                    bind_address
+                );
             } else {
                 println!("Traxes Engine listening on http://{}", bind_address);
             }
@@ -430,7 +463,12 @@ async fn main() {
                 .expect("Failed to start server");
         }
         "evaluate" => {
-            let payload_path = if args.len() >= 3 && args[2] != "--payload" && args[2] != "--demo-mode" && args[2] != "--demo-mode=false" && args[2] != "--debug" {
+            let payload_path = if args.len() >= 3
+                && args[2] != "--payload"
+                && args[2] != "--demo-mode"
+                && args[2] != "--demo-mode=false"
+                && args[2] != "--debug"
+            {
                 args[2].clone()
             } else if args.len() >= 4 {
                 // Handle --payload flag format
@@ -455,39 +493,45 @@ async fn main() {
                 write_artifact_on_exit(&error_ctx);
                 std::process::exit(1);
             };
-            
+
             // Initialize async logging queue for CLI evaluate mode
             let (async_log_sender, async_log_rx) = async_logger::create_async_log_channel(100);
             async_logger::init_global_async_logger(async_log_sender);
-            
+
             // Spawn async logger worker
             let async_logger_worker = async_logger::AsyncLogger::new(async_log_rx);
             tokio::spawn(async_logger_worker.run());
-            
+
             // Initialize sharded event emitter for CLI evaluate mode (2 shards for CLI, total capacity: 100)
             let shard_count = 2;
             let capacity_per_shard = 50;
-            let (event_emitter, event_receivers, event_counter) = artifact_emitter::create_sharded_event_channels(shard_count, capacity_per_shard);
-            
+            let (event_emitter, event_receivers, event_counter) =
+                artifact_emitter::create_sharded_event_channels(shard_count, capacity_per_shard);
+
             // Spawn artifact emitter workers (one per shard)
-            let engine = Engine::load_default_policies().expect("Failed to load default policy bundle");
+            let engine =
+                Engine::load_default_policies().expect("Failed to load default policy bundle");
             let policy_hash = engine.policy_hash().to_string();
-            
+
             for event_rx in event_receivers {
-                let artifact_emitter = ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
+                let artifact_emitter =
+                    ArtifactEmitter::new(event_rx, policy_hash.clone(), event_counter.clone());
                 tokio::spawn(async move {
                     artifact_emitter.run().await;
                 });
             }
-            
+
             // Run evaluation with event emitter
             match evaluate::run_evaluate_with_emitter(payload_path, event_emitter, &engine).await {
                 Ok(result) => {
                     // Print result as JSON to stdout
-                    println!("{}", serde_json::to_string(&result).unwrap_or_else(|e| {
-                        eprintln!("error: Failed to serialize result: {:?}", e);
-                        std::process::exit(1);
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::to_string(&result).unwrap_or_else(|e| {
+                            eprintln!("error: Failed to serialize result: {:?}", e);
+                            std::process::exit(1);
+                        })
+                    );
                     std::process::exit(0);
                 }
                 Err(e) => {
@@ -541,7 +585,10 @@ async fn evaluate_action(
 
     // Generate action hash for replay metadata
     use sha2::Digest;
-    let action_hash = format!("{:x}", sha2::Sha256::digest(serde_json::to_string(&action).unwrap_or_default()));
+    let action_hash = format!(
+        "{:x}",
+        sha2::Sha256::digest(serde_json::to_string(&action).unwrap_or_default())
+    );
 
     if !cli_utils::is_demo_mode() {
         sleep(Duration::from_millis(150)).await;
@@ -549,8 +596,20 @@ async fn evaluate_action(
 
     let evaluation = state.engine.evaluate(&action);
 
-    // Enforcement gate: execute action if ALLOW, block if DENY
-    let execution_status = action::execute(&action, &evaluation.decision, &decision_id);
+    // Enforcement gate: create permit if ALLOW, then execute with authorization
+    let permit = if evaluation.decision == "ALLOW" {
+        action::ExecutionPermit::from_allow_decision(&action, &decision_id)
+    } else {
+        None
+    };
+    let execution_outcome = action::execute(&action, permit);
+
+    // Convert ExecutionOutcome to legacy execution_status string for backward compatibility
+    let execution_status = match execution_outcome {
+        action::ExecutionOutcome::Executed => "executed".to_string(),
+        action::ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
+        action::ExecutionOutcome::Unauthorized => "blocked".to_string(),
+    };
 
     if !cli_utils::is_demo_mode() {
         sleep(Duration::from_millis(100)).await;
@@ -558,7 +617,7 @@ async fn evaluate_action(
 
     // Emit lightweight decision record instead of full execution event
     let event_start = Instant::now();
-    
+
     // Create lightweight decision record for async artifact construction
     let decision_record = crate::traxes_engine::DecisionRecord {
         decision: evaluation.decision.clone(),
@@ -579,7 +638,10 @@ async fn evaluate_action(
     match state.event_emitter.try_emit_record(decision_record) {
         Ok(_) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Using synchronous fallback for {}", decision_id));
+            cli_utils::debug_log(format!(
+                "[EVENT QUEUE FULL] Using synchronous fallback for {}",
+                decision_id
+            ));
             // Fallback to synchronous artifact generation to preserve Invariant #2
             let artifact = ArtifactLogger::generate_artifact(
                 &decision_id,
@@ -593,12 +655,15 @@ async fn evaluate_action(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ResponseJson(ErrorResponse {
                         error: format!("Failed to write artifact (fallback): {}", e),
-                    })
+                    }),
                 ));
             }
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Using synchronous fallback for {}", decision_id));
+            cli_utils::debug_log(format!(
+                "[EVENT QUEUE CLOSED] Using synchronous fallback for {}",
+                decision_id
+            ));
             // Fallback to synchronous artifact generation to preserve Invariant #2
             let artifact = ArtifactLogger::generate_artifact(
                 &decision_id,
@@ -612,7 +677,7 @@ async fn evaluate_action(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ResponseJson(ErrorResponse {
                         error: format!("Failed to write artifact (fallback): {}", e),
-                    })
+                    }),
                 ));
             }
         }
@@ -620,9 +685,10 @@ async fn evaluate_action(
     let _event_io_time_us = event_io_start.elapsed().as_micros() as f64;
 
     // Record coverage after artifact emission
-    let coverage_policy = load_coverage_policy().unwrap_or_else(|_| {
-        crate::coverage::CoveragePolicyConfig { tools: std::collections::HashMap::new() }
-    });
+    let coverage_policy =
+        load_coverage_policy().unwrap_or_else(|_| crate::coverage::CoveragePolicyConfig {
+            tools: std::collections::HashMap::new(),
+        });
 
     let coverage_tracker = CoverageTracker::default();
     if let Err(e) = coverage_tracker.record_coverage(

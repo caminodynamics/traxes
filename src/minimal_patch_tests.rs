@@ -314,15 +314,15 @@ rules:
         };
 
         // Evaluate for the allowed action
-        let evaluation = engine.evaluate(&action);
         let decision_id = Uuid::new_v4().to_string();
+        let (evaluation, permit) = engine.evaluate_with_permit(&action, &decision_id);
 
-        // Execute through central boundary
-        let exec_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
+        // Execute through central boundary with authorization
+        let exec_outcome = crate::action::execute(&action, permit);
 
         // ALLOW case: must have executed and created the file
         assert_eq!(evaluation.decision, "ALLOW");
-        assert_eq!(exec_status, "executed");
+        assert_eq!(exec_outcome, crate::action::ExecutionOutcome::Executed);
         assert!(target.exists(), "ALLOW must create the target file");
         let contents = std::fs::read_to_string(&target).unwrap_or_default();
         assert_eq!(contents, "minimal test payload");
@@ -339,12 +339,15 @@ rules:
                 "content": "should not be written"
             }),
         };
-        let deny_eval = engine.evaluate(&deny_action);
-        assert_eq!(deny_eval.decision, "DENY");
         let deny_decision_id = Uuid::new_v4().to_string();
-        let deny_exec_status =
-            crate::action::execute(&deny_action, &deny_eval.decision, &deny_decision_id);
-        assert_eq!(deny_exec_status, "blocked");
+        let (deny_eval, deny_permit) = engine.evaluate_with_permit(&deny_action, &deny_decision_id);
+        assert_eq!(deny_eval.decision, "DENY");
+        assert!(deny_permit.is_none(), "DENY should not create permit");
+        let deny_exec_outcome = crate::action::execute(&deny_action, deny_permit);
+        assert_eq!(
+            deny_exec_outcome,
+            crate::action::ExecutionOutcome::Unauthorized
+        );
         assert!(
             !deny_target.exists(),
             "DENY must NOT create the target file"
@@ -376,13 +379,21 @@ rules:
         };
 
         // Use a simple engine that allows this path so execute() will attempt the write
-        let decision = "ALLOW".to_string();
         let decision_id = Uuid::new_v4().to_string();
+        let permit = crate::action::ExecutionPermit::from_allow_decision(&action, &decision_id);
+        assert!(permit.is_some(), "ALLOW should create permit");
 
-        let exec_status = crate::action::execute(&action, &decision, &decision_id);
+        let exec_outcome = crate::action::execute(&action, permit);
 
-        // Expect failure to write to a directory -> blocked and no "executed"
-        assert_eq!(exec_status, "blocked");
+        // Expect failure to write to a directory -> ExecutionFailed, not Unauthorized
+        match exec_outcome {
+            crate::action::ExecutionOutcome::ExecutionFailed(_) => {
+                // Expected: write failed
+            }
+            other => {
+                panic!("Expected ExecutionFailed, got {:?}", other);
+            }
+        }
         // Ensure no regular file was created at that path
         assert!(dir_target.exists() && dir_target.is_dir());
 
@@ -421,14 +432,14 @@ rules:
         );
         let engine = Engine::with_policy(policy.to_string());
 
-        let evaluation = engine.evaluate(&action);
-        assert_eq!(evaluation.decision, "ALLOW");
         let decision_id = Uuid::new_v4().to_string();
+        let (evaluation, permit) = engine.evaluate_with_permit(&action, &decision_id);
+        assert_eq!(evaluation.decision, "ALLOW");
 
         // Execute to create the file
-        let exec_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
+        let exec_outcome = crate::action::execute(&action, permit);
         if evaluation.decision == "ALLOW" {
-            assert_eq!(exec_status, "executed");
+            assert_eq!(exec_outcome, crate::action::ExecutionOutcome::Executed);
             assert!(target.exists());
         }
 
@@ -438,12 +449,19 @@ rules:
 
         // Replay should match but must not recreate the file
         let replay_engine = ReplayEngine::new(engine);
-        let artifact = ArtifactLogger::generate_artifact(
+        let exec_status = match exec_outcome {
+            crate::action::ExecutionOutcome::Executed => "executed".to_string(),
+            crate::action::ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
+            crate::action::ExecutionOutcome::Unauthorized => "blocked".to_string(),
+        };
+        let execution_outcome_str = Some(format!("{:?}", exec_outcome));
+        let artifact = ArtifactLogger::generate_artifact_with_outcome(
             &decision_id,
             &action,
             &evaluation,
             replay_engine.engine.policy_hash(),
             exec_status,
+            execution_outcome_str,
         );
         let replay_res = replay_engine.replay_from_artifact(&artifact);
         assert!(replay_res.match_status);
@@ -502,13 +520,16 @@ rules:
         let reconstructed = event.to_evaluation_decision();
 
         // The reconstructed rule should be the operator "not_in", not the rule_id
-        assert_eq!(reconstructed.rule, "not_in",
-            "Async path must preserve operator, not rule_id");
+        assert_eq!(
+            reconstructed.rule, "not_in",
+            "Async path must preserve operator, not rule_id"
+        );
         assert_eq!(reconstructed.field, evaluation.result.field);
 
         let (_, rx) = tokio::sync::mpsc::channel(1);
         let emitter = crate::artifact_emitter::ArtifactEmitter::new(
-            rx, engine.policy_hash().to_string(),
+            rx,
+            engine.policy_hash().to_string(),
             std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         );
         for operator in ["not_in", "in_list"] {
@@ -516,7 +537,10 @@ rules:
             event.rule_trace.operator = operator.to_string();
             let artifact = emitter.event_to_artifact(event).unwrap();
             assert_eq!(artifact.rule_evaluation.operator, operator);
-            assert_eq!(artifact.rule_evaluation.observed_value, json!("/tmp/test.txt"));
+            assert_eq!(
+                artifact.rule_evaluation.observed_value,
+                json!("/tmp/test.txt")
+            );
             assert_eq!(artifact.rules_evaluated.unwrap()[0].operator, operator);
         }
     }
@@ -532,9 +556,16 @@ rules:
         };
         // Hold evaluation and decision ID fixed to isolate action binding.
         let evaluation = engine.evaluate(&action);
-        let hash = |action: &ProposedAction| ArtifactLogger::generate_artifact(
-            "fixed-id", action, &evaluation, engine.policy_hash(), "blocked".to_string(),
-        ).sha256_hash;
+        let hash = |action: &ProposedAction| {
+            ArtifactLogger::generate_artifact(
+                "fixed-id",
+                action,
+                &evaluation,
+                engine.policy_hash(),
+                "blocked".to_string(),
+            )
+            .sha256_hash
+        };
         let original = hash(&action);
         assert_eq!(original, hash(&action));
         for field in ["content", "path"] {
@@ -549,7 +580,11 @@ rules:
         changed.environment.push_str("-changed");
         assert_ne!(original, hash(&changed));
         let mut changed = action.clone();
-        changed.parameters.as_object_mut().unwrap().remove("content");
+        changed
+            .parameters
+            .as_object_mut()
+            .unwrap()
+            .remove("content");
         let missing = hash(&changed);
         changed.parameters["content"] = json!("");
         assert_ne!(missing, hash(&changed));
@@ -580,11 +615,26 @@ rules:
 
         let check = |path: &std::path::Path| {
             let action = ProposedAction {
-                tool: "FILE_WRITE".to_string(), session_id: "links".to_string(),
+                tool: "FILE_WRITE".to_string(),
+                session_id: "links".to_string(),
                 environment: "sandbox".to_string(),
                 parameters: json!({"path": path, "content": "escaped"}),
             };
-            assert_eq!(crate::action::execute(&action, "ALLOW", "links"), "blocked");
+            // Even with ALLOW, symlink protection should fail the write
+            let permit = crate::action::ExecutionPermit::from_allow_decision(&action, "links");
+            let exec_outcome = crate::action::execute(&action, permit);
+            // Should be ExecutionFailed due to symlink protection, not Unauthorized
+            match exec_outcome {
+                crate::action::ExecutionOutcome::ExecutionFailed(_) => {
+                    // Expected: write failed due to symlink protection
+                }
+                other => {
+                    panic!(
+                        "Expected ExecutionFailed for symlink protection, got {:?}",
+                        other
+                    );
+                }
+            }
         };
         check(&link);
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
@@ -625,8 +675,15 @@ rules:
         let junction = governed.join("redirect");
         let output = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(&junction).arg(&outside).output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            .arg(&junction)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let victim = outside.join("victim.txt");
         std::fs::write(&victim, "untouched").unwrap();
         for name in ["victim.txt", "missing.txt"] {
@@ -635,13 +692,26 @@ rules:
                 "target:\n  tool: FILE_WRITE\nrules:\n  - name: allowlist\n    condition: payload.proposed_action.parameters.path not in [\"{path}\"]\n    action: DENY\n"
             ));
             let action = ProposedAction {
-                tool: "FILE_WRITE".to_string(), session_id: "junction".to_string(),
+                tool: "FILE_WRITE".to_string(),
+                session_id: "junction".to_string(),
                 environment: "sandbox".to_string(),
                 parameters: json!({"path": path, "content": "escaped"}),
             };
-            let evaluation = engine.evaluate(&action);
+            let (evaluation, permit) = engine.evaluate_with_permit(&action, "junction");
             assert_eq!(evaluation.decision, "ALLOW");
-            assert_eq!(crate::action::execute(&action, &evaluation.decision, "junction"), "blocked");
+            // Junction protection should fail the write even with ALLOW
+            let exec_outcome = crate::action::execute(&action, permit);
+            match exec_outcome {
+                crate::action::ExecutionOutcome::ExecutionFailed(_) => {
+                    // Expected: write failed due to junction protection
+                }
+                other => {
+                    panic!(
+                        "Expected ExecutionFailed for junction protection, got {:?}",
+                        other
+                    );
+                }
+            }
         }
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
         assert!(!outside.join("missing.txt").exists());

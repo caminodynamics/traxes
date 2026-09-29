@@ -1,14 +1,14 @@
 use chrono::Utc;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 
 use crate::action::ProposedAction;
 use crate::cli_utils;
-use crate::traxes_engine::EvaluationDecision;
+use crate::coverage::{CoverageEventType, CoverageRegistry, CoverageTracker};
 use crate::server_policy::EvaluationResult;
-use crate::coverage::{CoverageTracker, CoverageRegistry, CoverageEventType};
+use crate::traxes_engine::EvaluationDecision;
 
 const POLICY_BUNDLE: &str = "infra-cost-limit-v1";
 
@@ -27,16 +27,17 @@ pub struct AuditArtifact {
     pub policy_hash: String,
     pub sha256_hash: String,
     pub engine: EngineInfo,
-    pub policy_info: Option<PolicyInfo>,  // NEW: Policy metadata with version
+    pub policy_info: Option<PolicyInfo>, // NEW: Policy metadata with version
     pub execution_context: ExecutionContext,
     pub proposed_action: ProposedActionInfo,
     pub rule_evaluation: RuleEvaluationInfo,
-    pub rules_evaluated: Option<Vec<RuleEvaluationInfo>>,  // NEW: Multi-rule support
+    pub rules_evaluated: Option<Vec<RuleEvaluationInfo>>, // NEW: Multi-rule support
     pub performance: PerformanceInfo,
     pub side_effect_prevention: SideEffectPreventionInfo,
-    pub governance_info: Option<GovernanceInfo>,  // NEW: Governance coverage
-    pub evaluation_trace: Option<EvaluationTrace>,  // NEW: Evaluation trace
-    pub execution_status: String,
+    pub governance_info: Option<GovernanceInfo>, // NEW: Governance coverage
+    pub evaluation_trace: Option<EvaluationTrace>, // NEW: Evaluation trace
+    pub execution_status: String,                // Legacy field for backward compatibility
+    pub execution_outcome: Option<String>, // NEW: Detailed execution outcome (Executed/ExecutionFailed/Unauthorized)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +85,7 @@ pub struct RuleEvaluationInfo {
     pub policy_value: f64,
     pub evaluation_expression: String,
     pub evaluation_result: bool,
-    pub rule_order: Option<u32>,  // NEW: For multi-rule ordering
+    pub rule_order: Option<u32>, // NEW: For multi-rule ordering
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,7 +102,7 @@ pub struct SideEffectPreventionInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GovernanceInfo {
-    pub coverage_status: String,  // "GOVERNED" | "UNGOVERNED" | "PARTIALLY_GOVERNED"
+    pub coverage_status: String, // "GOVERNED" | "UNGOVERNED" | "PARTIALLY_GOVERNED"
     pub endpoint: String,
     pub enforcement_hit: bool,
     pub coverage_event_type: Option<String>,
@@ -115,9 +116,9 @@ pub struct EvaluationTrace {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EvaluationStep {
-    pub step_name: String,           // "policy_loaded" | "rule_evaluated" | "decision_produced"
+    pub step_name: String, // "policy_loaded" | "rule_evaluated" | "decision_produced"
     pub step_order: u32,
-    pub step_result: String,         // "SUCCESS" | "FAILURE"
+    pub step_result: String, // "SUCCESS" | "FAILURE"
     pub step_duration_us: f64,
     pub step_details: Option<String>, // Optional context
 }
@@ -127,19 +128,19 @@ impl AuditArtifact {
     fn create_governance_info(action: &ProposedAction) -> Option<GovernanceInfo> {
         let registry = CoverageRegistry::new();
         let tracker = CoverageTracker::new(registry);
-        
+
         // Register the endpoint if not already registered
         let endpoint = format!("{}::{}", action.tool, action.environment);
         tracker.register_endpoint(endpoint.clone(), true);
-        
+
         // Track the request
         let event = tracker.track_request(
             action.tool.clone(),
             endpoint.clone(),
-            None,  // No decision_id yet
-            true,  // Assume enforcement hit for now
+            None, // No decision_id yet
+            true, // Assume enforcement hit for now
         );
-        
+
         Some(GovernanceInfo {
             coverage_status: if event.event_type == CoverageEventType::EnforcedPath {
                 "GOVERNED".to_string()
@@ -154,7 +155,9 @@ impl AuditArtifact {
 
     /// Create multi-rule evaluation collection from single rule
     /// This maintains backward compatibility while enabling multi-rule support
-    fn create_rules_evaluated(rule_evaluation: &RuleEvaluationInfo) -> Option<Vec<RuleEvaluationInfo>> {
+    fn create_rules_evaluated(
+        rule_evaluation: &RuleEvaluationInfo,
+    ) -> Option<Vec<RuleEvaluationInfo>> {
         Some(vec![rule_evaluation.clone()])
     }
 
@@ -171,6 +174,7 @@ impl AuditArtifact {
         decision: &str,
         evaluation_result: &EvaluationResult,
         execution_status: &str,
+        execution_outcome: &Option<String>,
     ) -> String {
         let env = &action.environment;
         let param_key = crate::server_policy::parameter_key(&evaluation_result.field);
@@ -180,23 +184,33 @@ impl AuditArtifact {
         // (list-aware) composition that includes the observed parameter value.
         let hash_input = if action.tool == "FILE_WRITE" {
             // Structured encoding binds all parameters (including path/content)
-            // without delimiter ambiguity. Keep legacy non-FILE_WRITE hashes.
+            // without delimiter ambiguity. Include execution_outcome for hardening
             serde_json::json!({
                 "fingerprint_version": "file_write_v1",
                 "decision_id": decision_id,
                 "action": action,
                 "decision": decision,
                 "execution_status": execution_status,
+                "execution_outcome": execution_outcome,
                 "reason": evaluation_result.reason,
                 "policy_bundle": POLICY_BUNDLE,
                 "field": evaluation_result.field,
                 "operator": evaluation_result.rule,
                 "policy_value": evaluation_result.policy_value
-            }).to_string()
+            })
+            .to_string()
         } else if param_key == "instance_type" {
             // Reproduce HEAD composition exactly for instance_type.
-            let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let instance_type = action
+                .parameters
+                .get("instance_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let cost_per_hour = action
+                .parameters
+                .get("instance_cost_per_hour")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             format!(
                 "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 decision_id,
@@ -214,7 +228,9 @@ impl AuditArtifact {
                 evaluation_result.policy_value
             )
         } else {
-            let observed_val_str = action.parameters.get(param_key)
+            let observed_val_str = action
+                .parameters
+                .get(param_key)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
@@ -247,8 +263,10 @@ impl AuditArtifact {
         decision_latency_us: f64,
         policy_hash: String,
         execution_status: String,
+        execution_outcome: Option<String>,
     ) -> Self {
-        let (normalized_decision, explicit_reason): (&str, String) = cli_utils::normalize_decision(evaluation_result);
+        let (normalized_decision, explicit_reason): (&str, String) =
+            cli_utils::normalize_decision(evaluation_result);
         let reason = if normalized_decision == "DENY" {
             if !explicit_reason.is_empty() {
                 cli_utils::one_line_reason(&explicit_reason, evaluation_result)
@@ -265,6 +283,7 @@ impl AuditArtifact {
             normalized_decision,
             evaluation_result,
             &execution_status,
+            &execution_outcome,
         );
 
         let evaluation_expression = if cli_utils::is_demo_mode() {
@@ -277,7 +296,7 @@ impl AuditArtifact {
         };
 
         let env = action.environment.clone();
-        
+
         let mut extra = std::collections::HashMap::new();
         if let Some(obj) = action.parameters.as_object() {
             for (k, v) in obj {
@@ -287,20 +306,31 @@ impl AuditArtifact {
             }
         }
 
-        let instance_type = action.parameters.get("instance_type").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let instance_cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64());
-        let path = action.parameters.get("path").and_then(|v| v.as_str()).map(|s| s.to_string());
-        
+        let instance_type = action
+            .parameters
+            .get("instance_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let instance_cost_per_hour = action
+            .parameters
+            .get("instance_cost_per_hour")
+            .and_then(|v| v.as_f64());
+        let path = action
+            .parameters
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         // NEW: Create PolicyInfo with version
         let policy_info = Some(PolicyInfo {
             policy_id: POLICY_BUNDLE.to_string(),
             policy_version: "1.0.0".to_string(),
             policy_hash: policy_hash.clone(),
         });
-        
+
         // NEW: Create governance info from coverage tracking
         let governance_info = Self::create_governance_info(action);
-        
+
         // Create rule evaluation info
         let rule_evaluation = RuleEvaluationInfo {
             rule_id: "infra-cost-limit".to_string(),
@@ -309,23 +339,26 @@ impl AuditArtifact {
             observed_value: if crate::server_policy::is_string_operator(&evaluation_result.rule) {
                 serde_json::Value::String(evaluation_result.observed_value_str.clone())
             } else {
-                serde_json::Value::Number(serde_json::Number::from_f64(evaluation_result.observed_value).unwrap_or(serde_json::Number::from(0)))
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(evaluation_result.observed_value)
+                        .unwrap_or(serde_json::Number::from(0)),
+                )
             },
             operator: evaluation_result.rule.clone(),
             policy_value: evaluation_result.policy_value,
             evaluation_expression,
             evaluation_result: evaluation_result.action.is_some(), // True if rule was violated (action returned)
-            rule_order: Some(0),  // NEW: Single rule has order 0
+            rule_order: Some(0),                                   // NEW: Single rule has order 0
         };
-        
+
         // NEW: Create rules_evaluated collection for multi-rule support
         let rules_evaluated = Self::create_rules_evaluated(&rule_evaluation);
-        
+
         // NEW: Create evaluation trace (disabled by default)
         let evaluation_trace = Self::create_evaluation_trace(evaluation_latency_us);
-        
+
         Self {
-            artifact_version: "2.0.0".to_string(),  // Updated version
+            artifact_version: "2.0.0".to_string(), // Updated version
             artifact_type: "pre_execution_decision".to_string(),
             decision_id: decision_id.to_string(),
             timestamp: Utc::now().to_rfc3339(),
@@ -341,7 +374,7 @@ impl AuditArtifact {
                 engine_version: "1.0.0".to_string(),
                 policy_bundle_id: POLICY_BUNDLE.to_string(),
             },
-            policy_info,  // NEW: Policy metadata
+            policy_info, // NEW: Policy metadata
             execution_context: ExecutionContext {
                 session_id: action.session_id.clone(),
                 trace_id: decision_id.to_string(), // Use decision_id as trace_id for now to ensure uniqueness
@@ -357,7 +390,7 @@ impl AuditArtifact {
                 },
             },
             rule_evaluation,
-            rules_evaluated,  // NEW: Multi-rule collection
+            rules_evaluated, // NEW: Multi-rule collection
             performance: PerformanceInfo {
                 evaluation_latency_us,
                 decision_latency_us,
@@ -367,8 +400,9 @@ impl AuditArtifact {
                 decision_effect: normalized_decision.to_string(),
             },
             governance_info,  // NEW: Governance info from coverage tracking
-            evaluation_trace,  // NEW: Optional evaluation trace
+            evaluation_trace, // NEW: Optional evaluation trace
             execution_status,
+            execution_outcome,
         }
     }
 
@@ -387,6 +421,7 @@ impl AuditArtifact {
         evaluation: &EvaluationDecision,
         policy_hash: &str,
         execution_status: String,
+        execution_outcome: Option<String>,
     ) -> Self {
         Self::new(
             decision_id,
@@ -397,6 +432,7 @@ impl AuditArtifact {
             4.8,
             policy_hash.to_string(),
             execution_status,
+            execution_outcome,
         )
     }
 
@@ -410,9 +446,7 @@ impl AuditArtifact {
 
         // Use synchronous write in async context for compatibility
         let file_path_clone = file_path.clone();
-        tokio::task::spawn_blocking(move || {
-            fs::write(&file_path_clone, json_content)
-        }).await??;
+        tokio::task::spawn_blocking(move || fs::write(&file_path_clone, json_content)).await??;
 
         Ok(file_path)
     }
@@ -428,7 +462,32 @@ impl ArtifactLogger {
         policy_hash: &str,
         execution_status: String,
     ) -> AuditArtifact {
-        AuditArtifact::from_evaluation(decision_id, action, evaluation, policy_hash, execution_status)
+        AuditArtifact::from_evaluation(
+            decision_id,
+            action,
+            evaluation,
+            policy_hash,
+            execution_status,
+            None,
+        )
+    }
+
+    pub fn generate_artifact_with_outcome(
+        decision_id: &str,
+        action: &ProposedAction,
+        evaluation: &EvaluationDecision,
+        policy_hash: &str,
+        execution_status: String,
+        execution_outcome: Option<String>,
+    ) -> AuditArtifact {
+        AuditArtifact::from_evaluation(
+            decision_id,
+            action,
+            evaluation,
+            policy_hash,
+            execution_status,
+            execution_outcome,
+        )
     }
 
     pub fn write_sync(artifact: &AuditArtifact) -> Result<String, Box<dyn std::error::Error>> {

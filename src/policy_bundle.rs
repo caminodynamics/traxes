@@ -31,7 +31,6 @@ pub fn normalize_policy_encoding(policy_content: &str, path: &str) -> String {
     policy_content.to_string()
 }
 
-
 pub fn evaluate_action_policy(action: &ProposedAction, policy_yaml: &str) -> EvaluationResult {
     let target_tool = parse_policy_target_tool(policy_yaml);
     if let Some(denial) = validate_policy_target(action, target_tool.as_deref()) {
@@ -45,10 +44,19 @@ pub fn evaluate_action_policy(action: &ProposedAction, policy_yaml: &str) -> Eva
     }
 
     if let Some((op, values, field)) = find_list_rule_from_yaml(policy_yaml) {
-        return evaluate_list_rule(action, &evaluator, &op, &values, &field, "instance_type_constraint");
+        return evaluate_list_rule(
+            action,
+            &evaluator,
+            &op,
+            &values,
+            &field,
+            "instance_type_constraint",
+        );
     }
 
-    if let Some(result) = evaluate_deny_expensive_instances_fallback(action, &evaluator, policy_yaml) {
+    if let Some(result) =
+        evaluate_deny_expensive_instances_fallback(action, &evaluator, policy_yaml)
+    {
         return result;
     }
 
@@ -66,7 +74,10 @@ pub(crate) fn parse_policy_target_tool(policy_yaml: &str) -> Option<String> {
     Some(tool.to_string())
 }
 
-fn validate_policy_target(action: &ProposedAction, target_tool: Option<&str>) -> Option<EvaluationResult> {
+fn validate_policy_target(
+    action: &ProposedAction,
+    target_tool: Option<&str>,
+) -> Option<EvaluationResult> {
     if target_tool.is_some_and(|tool| !tool.trim().is_empty() && tool == action.tool) {
         return None;
     }
@@ -85,7 +96,7 @@ fn validate_policy_target(action: &ProposedAction, target_tool: Option<&str>) ->
 /// Parse policy rules from YAML during engine initialization
 pub fn parse_policy_rules(policy_yaml: &str) -> Vec<ParsedRule> {
     let mut rules = Vec::new();
-    
+
     // Try to find list rules from YAML
     if let Some((op, values, field)) = find_list_rule_from_yaml(policy_yaml) {
         rules.push(ParsedRule {
@@ -95,7 +106,7 @@ pub fn parse_policy_rules(policy_yaml: &str) -> Vec<ParsedRule> {
             rule_id: "instance_type_constraint".to_string(),
         });
     }
-    
+
     // Try to find numeric threshold rules
     if let Some(threshold) = find_numeric_lte_threshold(policy_yaml) {
         // Convert numeric threshold to a rule representation
@@ -107,18 +118,22 @@ pub fn parse_policy_rules(policy_yaml: &str) -> Vec<ParsedRule> {
             rule_id: "numeric_lte".to_string(),
         });
     }
-    
+
     rules
 }
 
 /// Evaluate action using pre-parsed rules and their policy target (hot path).
 /// Target matching is mandatory and precedes every rule evaluation.
-pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: &[ParsedRule], target_tool: Option<&str>) -> EvaluationResult {
+pub fn evaluate_action_policy_with_rules(
+    action: &ProposedAction,
+    parsed_rules: &[ParsedRule],
+    target_tool: Option<&str>,
+) -> EvaluationResult {
     if let Some(denial) = validate_policy_target(action, target_tool) {
         return denial;
     }
     let evaluator = PolicyEvaluator::new();
-    
+
     // Try numeric_lte rules first
     for rule in parsed_rules {
         if rule.operator == "numeric_lte" {
@@ -127,7 +142,7 @@ pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: 
             }
         }
     }
-    
+
     // Try list rules (not_in, in_list)
     for rule in parsed_rules {
         if rule.operator == "not_in" || rule.operator == "in_list" {
@@ -141,7 +156,7 @@ pub fn evaluate_action_policy_with_rules(action: &ProposedAction, parsed_rules: 
             );
         }
     }
-    
+
     cli_utils::debug_log("[Traxes] No matching rules found; failing closed.");
     missing_threshold_result(action)
 }
@@ -164,7 +179,11 @@ fn evaluate_numeric_lte(
     };
 
     let action_result = evaluator.evaluate(action, &rule);
-    let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let cost_per_hour = action
+        .parameters
+        .get("instance_cost_per_hour")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     EvaluationResult {
         action: action_result,
         field: rule.field.clone(),
@@ -172,7 +191,10 @@ fn evaluate_numeric_lte(
         observed_value: cost_per_hour,
         observed_value_str: cost_per_hour.to_string(),
         policy_value: threshold.parse::<f64>().unwrap_or(0.0),
-        evaluation_expression: cli_utils::compact_evaluation_expression(&rule.field, &rule.operator),
+        evaluation_expression: cli_utils::compact_evaluation_expression(
+            &rule.field,
+            &rule.operator,
+        ),
         reason: "INFRA_COST_LIMIT_CHECK".to_string(),
     }
 }
@@ -195,18 +217,26 @@ fn evaluate_list_rule(
 
     let action_result = evaluator.evaluate(action, &rule);
     let param_key = crate::server_policy::parameter_key(field);
-    let observed_value_raw = action.parameters.get(param_key).and_then(|v| v.as_str()).unwrap_or("unknown");
-    
+    let observed_value_raw = action
+        .parameters
+        .get(param_key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
     // Return raw observed values - hashing moved to artifact generation phase
     // Classify by operator (op) rather than field name. If this is a list
     // operator, return string observed value; otherwise assume numeric (cost).
     let (observed_value, observed_value_str) = if op == "in_list" || op == "not_in" {
         (0.0, observed_value_raw.to_string())
     } else {
-        let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let cost_per_hour = action
+            .parameters
+            .get("instance_cost_per_hour")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
         (cost_per_hour, cost_per_hour.to_string())
     };
-    
+
     EvaluationResult {
         action: action_result,
         field: rule.field.clone(),
@@ -284,14 +314,20 @@ fn evaluate_deny_expensive_instances_fallback(
             }
         }
         _ => {
-            cli_utils::debug_log("[Traxes] No usable allowlist found in raw slice; failing closed.");
+            cli_utils::debug_log(
+                "[Traxes] No usable allowlist found in raw slice; failing closed.",
+            );
             Some(missing_threshold_result(action))
         }
     }
 }
 
 fn missing_threshold_result(action: &ProposedAction) -> EvaluationResult {
-    let cost_per_hour = action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let cost_per_hour = action
+        .parameters
+        .get("instance_cost_per_hour")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     EvaluationResult {
         action: Some("DENY".to_string()),
         field: "instance_cost_per_hour".to_string(),
@@ -417,7 +453,6 @@ fn find_list_rule_from_yaml(policy_yaml: &str) -> Option<(String, Vec<String>, S
     None
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,7 +490,11 @@ mod tests {
 
     #[test]
     fn matching_aws_target_preserves_allow() {
-        assert_decision(crate::traxes_engine::DEFAULT_POLICY_YAML, &action("aws_ec2_provision"), "ALLOW");
+        assert_decision(
+            crate::traxes_engine::DEFAULT_POLICY_YAML,
+            &action("aws_ec2_provision"),
+            "ALLOW",
+        );
     }
 
     #[test]
@@ -463,8 +502,13 @@ mod tests {
         let policy = crate::traxes_engine::DEFAULT_POLICY_YAML;
         let action = action("FILE_WRITE");
         assert_decision(policy, &action, "DENY");
-        assert_eq!(Engine::with_policy(policy.to_string()).evaluate(&action).result.reason,
-            "POLICY_TARGET_MISSING_OR_MISMATCH");
+        assert_eq!(
+            Engine::with_policy(policy.to_string())
+                .evaluate(&action)
+                .result
+                .reason,
+            "POLICY_TARGET_MISSING_OR_MISMATCH"
+        );
     }
 
     #[test]
@@ -493,9 +537,15 @@ rules:
     action: DENY
 "#;
         for target in [
-            "", "target: null\n", "target: {}\n", "target: FILE_WRITE\n",
-            "target: {tool: null}\n", "target: {tool: 42}\n",
-            "target: {tool: []}\n", "target: {tool: ''}\n", "target: {tool: '   '}\n",
+            "",
+            "target: null\n",
+            "target: {}\n",
+            "target: FILE_WRITE\n",
+            "target: {tool: null}\n",
+            "target: {tool: 42}\n",
+            "target: {tool: []}\n",
+            "target: {tool: ''}\n",
+            "target: {tool: '   '}\n",
             "target: {tool: unrelated}\n",
         ] {
             let policy = format!("{target}{rules}");
@@ -505,7 +555,11 @@ rules:
         }
         // Tool matching is exact, with no case folding or whitespace aliases.
         for tool in ["", "AWS_EC2_PROVISION", "aws_ec2_provision "] {
-            assert_decision(crate::traxes_engine::DEFAULT_POLICY_YAML, &action(tool), "DENY");
+            assert_decision(
+                crate::traxes_engine::DEFAULT_POLICY_YAML,
+                &action(tool),
+                "DENY",
+            );
         }
         assert_decision("target: [invalid yaml", &action("FILE_WRITE"), "DENY");
     }
@@ -523,7 +577,13 @@ rules:
             action.parameters["path"] = json!(path);
             let decision = engine.evaluate(&action);
             assert_eq!(decision.decision, "DENY");
-            assert_eq!(crate::action::execute(&action, &decision.decision, "target-mismatch"), "blocked");
+            // DENY decisions mean no permit is created by the engine
+            // Simulate this by passing None to execute
+            let execution_outcome = crate::action::execute(&action, None);
+            assert_eq!(
+                execution_outcome,
+                crate::action::ExecutionOutcome::Unauthorized
+            );
         }
         assert_eq!(std::fs::read_to_string(&existing).unwrap(), "untouched");
         assert!(!missing.exists());
