@@ -1,5 +1,5 @@
-﻿//! Library crate for traxes-demo policy evaluation engine
-//! 
+//! Library crate for traxes-demo policy evaluation engine
+//!
 //! This library provides the core policy evaluation functionality for the
 //! Traxes decision runtime, including:
 //! - Policy loading and parsing
@@ -11,8 +11,6 @@ pub mod action;
 pub mod artifact;
 pub mod artifact_emitter;
 pub mod artifact_tests;
-pub mod load_test;
-pub mod reliability_tests;
 pub mod assets;
 pub mod async_logger;
 pub mod cli_utils;
@@ -20,9 +18,11 @@ pub mod coverage;
 pub mod engine;
 pub mod evaluate;
 pub mod execution_event;
+pub mod load_test;
 pub mod metrics;
 pub mod policy;
 pub mod policy_bundle;
+pub mod reliability_tests;
 pub mod replay;
 pub mod server_policy;
 pub mod traxes_engine;
@@ -54,8 +54,7 @@ pub fn alloc_snapshot() -> (usize, usize) {
 }
 
 // Re-export commonly used types for convenience
-pub use action::ProposedAction;
-pub use artifact::{AuditArtifact, ArtifactLogger};
-pub use traxes_engine::{DecisionRecord, Engine, EvaluationDecision};
+pub use action::{ExecutionOutcome, ProposedAction};
+pub use artifact::{ArtifactLogger, AuditArtifact};
 pub use server_policy::{EvaluationResult, PolicyEvaluator, Rule};
-
+pub use traxes_engine::{DecisionRecord, Engine, EvaluationDecision};

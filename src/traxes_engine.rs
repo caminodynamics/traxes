@@ -137,7 +137,8 @@ impl Engine {
     }
 
     /// Evaluate action and create an ExecutionPermit if decision is ALLOW.
-    /// This is the ONLY trusted code path that can create execution permits.
+    /// This is the ONLY public code path that can create execution permits.
+    /// External callers must use this method - they cannot create permits directly.
     /// DENY decisions return None (no permit created).
     pub fn evaluate_with_permit(
         &self,

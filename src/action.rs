@@ -16,7 +16,52 @@ pub type Parameters = serde_json::Value;
 /// Strongly typed authorization that can only be created by trusted TRAXES evaluation code.
 /// This binds authorization to a specific action and prevents callers from bypassing
 /// the TRAXES engine by simply passing "ALLOW" strings.
-#[derive(Debug, Clone)]
+///
+/// The permit uses SHA-256 hashing to bind to the specific action, providing action integrity
+/// and ensuring a permit for one action cannot authorize a different action.
+/// A permit is consumed by execution and cannot be cloned or reused.
+/// Policy configuration is trusted: callers able to create an engine can choose
+/// its policy. Permits do not expire or track later policy changes.
+///
+/// External callers cannot mint a permit directly:
+/// ```compile_fail
+/// use traxes_demo::action::{ExecutionPermit, ProposedAction};
+/// fn forge(action: &ProposedAction) {
+///     let _ = ExecutionPermit::from_allow_decision(action, "forged");
+/// }
+/// ```
+/// Nor can they construct one using its fields:
+/// ```compile_fail
+/// use traxes_demo::action::ExecutionPermit;
+/// let _ = ExecutionPermit {
+///     action_hash: String::new(),
+///     decision_id: String::new(),
+///     _phantom: std::marker::PhantomData,
+/// };
+/// ```
+/// Permits cannot be duplicated:
+/// ```compile_fail
+/// use traxes_demo::action::ExecutionPermit;
+/// fn duplicate(permit: ExecutionPermit) {
+///     let _: ExecutionPermit = permit.clone();
+/// }
+/// ```
+/// Execution consumes the permit, including when the attempt fails:
+/// ```compile_fail
+/// use traxes_demo::action::{execute, ExecutionPermit, ProposedAction};
+/// fn reuse(action: &ProposedAction, permit: ExecutionPermit) {
+///     execute(action, Some(permit));
+///     execute(action, Some(permit));
+/// }
+/// ```
+/// There is no legacy string-based authorization entry point:
+/// ```compile_fail
+/// use traxes_demo::action::{execute_legacy, ProposedAction};
+/// fn bypass(action: &ProposedAction) {
+///     execute_legacy(action, "ALLOW", "forged");
+/// }
+/// ```
+#[derive(Debug)]
 pub struct ExecutionPermit {
     action_hash: String,
     decision_id: String,
@@ -25,10 +70,10 @@ pub struct ExecutionPermit {
 
 impl ExecutionPermit {
     /// Create an execution permit from an ALLOW decision.
-    /// This is the ONLY public constructor - it can only be called with an explicit ALLOW decision.
-    /// DENY decisions cannot create permits (returns None).
-    /// The permit is cryptographically bound to the specific action via hash.
-    pub fn from_allow_decision(action: &ProposedAction, decision_id: &str) -> Option<Self> {
+    /// This is ONLY callable by trusted TRAXES evaluation code within this crate.
+    /// External callers cannot create permits - they must go through the engine's
+    /// evaluate_with_permit() method which creates permits only for ALLOW decisions.
+    pub(crate) fn from_allow_decision(action: &ProposedAction, decision_id: &str) -> Option<Self> {
         Some(ExecutionPermit {
             action_hash: Self::hash_action(action),
             decision_id: decision_id.to_string(),
@@ -38,12 +83,12 @@ impl ExecutionPermit {
 
     /// Verify that this permit authorizes the given action.
     /// A permit for one action cannot authorize a different action.
-    pub fn authorizes(&self, action: &ProposedAction) -> bool {
+    fn authorizes(&self, action: &ProposedAction) -> bool {
         self.action_hash == Self::hash_action(action)
     }
 
     /// Get the decision ID for this permit.
-    pub fn decision_id(&self) -> &str {
+    pub(crate) fn decision_id(&self) -> &str {
         &self.decision_id
     }
 
@@ -66,7 +111,7 @@ pub enum ExecutionOutcome {
     Executed,
     /// Action was authorized but execution failed (e.g., filesystem error)
     ExecutionFailed(String),
-    /// Action was not authorized (DENY decision)
+    /// Authorization was absent or did not match this action.
     Unauthorized,
 }
 
@@ -177,26 +222,6 @@ fn execute_marker_action(action: &ProposedAction, decision_id: &str) -> Executio
     }
 }
 
-/// Legacy execution function for backward compatibility.
-/// This is kept for internal use during transition but should not be used by external callers.
-/// It converts the old string-based decision to the new permit-based system.
-#[deprecated(note = "Use execute with ExecutionPermit instead")]
-pub fn execute_legacy(action: &ProposedAction, decision: &str, decision_id: &str) -> String {
-    let permit = ExecutionPermit::from_allow_decision(action, decision_id);
-    let outcome = if decision == "ALLOW" {
-        execute(action, permit)
-    } else {
-        ExecutionOutcome::Unauthorized
-    };
-
-    // Convert ExecutionOutcome back to legacy string format
-    match outcome {
-        ExecutionOutcome::Executed => "executed".to_string(),
-        ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
-        ExecutionOutcome::Unauthorized => "blocked".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,10 +236,10 @@ mod tests {
             parameters: json!({"path": "/tmp/test.txt", "content": "test"}),
         };
 
-        // Even if we try to create a permit, DENY should not produce one
+        // From within the same crate, we can still call from_allow_decision for testing
+        // but external crates cannot - it's crate-private
         let permit = ExecutionPermit::from_allow_decision(&action, "test-id");
-        // The function should still create a permit (it doesn't know the decision)
-        // but the real security is that the engine won't call this for DENY
+        // The function creates a permit if called, but the engine never calls it for DENY
         assert!(permit.is_some());
 
         // The real security test: execution without proper permit should fail
@@ -235,8 +260,13 @@ mod tests {
         let outcome = execute(&action, None);
         assert_eq!(outcome, ExecutionOutcome::Unauthorized);
 
-        // With permit, execution should be attempted (may fail due to invalid path, but not unauthorized)
-        let permit = ExecutionPermit::from_allow_decision(&action, "test-id");
+        // With permit from engine, execution should be attempted (may fail due to invalid path, but not unauthorized)
+        // Use the engine to create the permit (the proper workflow)
+        let engine = crate::traxes_engine::Engine::with_policy(
+            "apiVersion: Traxes.dev/v1\nkind: ExecutionPolicy\nmetadata:\n  name: test-allow\ntarget:\n  tool: FILE_WRITE\nrules:\n  - name: allow-all\n    condition: payload.proposed_action.parameters.content not in [\"test\", \"test1\", \"authorized content\", \"will fail\"]\n    action: DENY"
+                .to_string(),
+        );
+        let (_, permit) = engine.evaluate_with_permit(&action, "test-id");
         let outcome = execute(&action, permit);
         // Should be either Executed or ExecutionFailed, but not Unauthorized
         assert_ne!(outcome, ExecutionOutcome::Unauthorized);
@@ -258,14 +288,13 @@ mod tests {
             parameters: json!({"path": "/tmp/test2.txt", "content": "test2"}),
         };
 
-        // Create permit for action1
-        let permit = ExecutionPermit::from_allow_decision(&action1, "test-id").unwrap();
-
-        // Permit should authorize action1
-        assert!(permit.authorizes(&action1));
-
-        // Permit should NOT authorize action2
-        assert!(!permit.authorizes(&action2));
+        // Create permit for action1 using the engine (proper workflow)
+        let engine = crate::traxes_engine::Engine::with_policy(
+            "apiVersion: Traxes.dev/v1\nkind: ExecutionPolicy\nmetadata:\n  name: test-allow\ntarget:\n  tool: FILE_WRITE\nrules:\n  - name: allow-all\n    condition: payload.proposed_action.parameters.content not in [\"test\", \"test1\", \"authorized content\", \"will fail\"]\n    action: DENY"
+                .to_string(),
+        );
+        let (_, permit) = engine.evaluate_with_permit(&action1, "test-id");
+        let permit = permit.unwrap();
 
         // Trying to execute action2 with action1's permit should be unauthorized
         let outcome = execute(&action2, Some(permit));
@@ -286,8 +315,13 @@ mod tests {
             parameters: json!({"path": target_str, "content": "authorized content"}),
         };
 
-        let permit = ExecutionPermit::from_allow_decision(&action, "test-id").unwrap();
-        let outcome = execute(&action, Some(permit));
+        // Use engine to create permit (proper workflow)
+        let engine = crate::traxes_engine::Engine::with_policy(
+            "apiVersion: Traxes.dev/v1\nkind: ExecutionPolicy\nmetadata:\n  name: test-allow\ntarget:\n  tool: FILE_WRITE\nrules:\n  - name: allow-all\n    condition: payload.proposed_action.parameters.content not in [\"test\", \"test1\", \"authorized content\", \"will fail\"]\n    action: DENY"
+                .to_string(),
+        );
+        let (_, permit) = engine.evaluate_with_permit(&action, "test-id");
+        let outcome = execute(&action, permit);
 
         // Should execute successfully
         assert_eq!(outcome, ExecutionOutcome::Executed);
@@ -312,8 +346,13 @@ mod tests {
             parameters: json!({"path": target_str, "content": "will fail"}),
         };
 
-        let permit = ExecutionPermit::from_allow_decision(&action, "test-id").unwrap();
-        let outcome = execute(&action, Some(permit));
+        // Use engine to create permit (proper workflow)
+        let engine = crate::traxes_engine::Engine::with_policy(
+            "apiVersion: Traxes.dev/v1\nkind: ExecutionPolicy\nmetadata:\n  name: test-allow\ntarget:\n  tool: FILE_WRITE\nrules:\n  - name: allow-all\n    condition: payload.proposed_action.parameters.content not in [\"test\", \"test1\", \"authorized content\", \"will fail\"]\n    action: DENY"
+                .to_string(),
+        );
+        let (_, permit) = engine.evaluate_with_permit(&action, "test-id");
+        let outcome = execute(&action, permit);
 
         // Should be ExecutionFailed, not Unauthorized (permit was valid but write failed)
         match outcome {
@@ -343,10 +382,15 @@ mod tests {
             parameters: json!({"path": target_str, "content": "should not write"}),
         };
 
-        // Simulate DENY: no permit
-        let outcome = execute(&action, None);
+        // Use engine to evaluate and get no permit for DENY (proper workflow)
+        let engine = crate::traxes_engine::Engine::with_policy(
+            "apiVersion: Traxes.dev/v1\nkind: ExecutionPolicy\nmetadata:\n  name: test-deny\ntarget:\n  tool: FILE_WRITE\nrules:\n  - name: deny-all\n    condition: payload.proposed_action.parameters.content not in [\"never-allowed\"]\n    action: DENY"
+                .to_string(),
+        );
+        let (_, permit) = engine.evaluate_with_permit(&action, "test-id");
+        let outcome = execute(&action, permit);
 
-        // Should be unauthorized
+        // Should be unauthorized (engine returned None permit for DENY)
         assert_eq!(outcome, ExecutionOutcome::Unauthorized);
 
         // File should not exist
@@ -354,5 +398,23 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn test_crate_private_permit_retains_decision_id() {
+        // Constructor/field privacy is checked by external compile-fail doctests.
+        // External crates cannot inspect or modify permit internals
+
+        let action = ProposedAction {
+            tool: "FILE_WRITE".to_string(),
+            session_id: "test-session".to_string(),
+            environment: "test".to_string(),
+            parameters: json!({"path": "/tmp/test.txt", "content": "test"}),
+        };
+
+        // Create a permit (within the same crate)
+        let permit = ExecutionPermit::from_allow_decision(&action, "test-id").unwrap();
+
+        assert_eq!(permit.decision_id(), "test-id");
     }
 }
