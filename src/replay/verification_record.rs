@@ -1,5 +1,5 @@
 use chrono::Utc;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Separate verification record for replay results
 /// Keeps original decision artifacts immutable
@@ -10,8 +10,8 @@ pub struct ReplayVerificationRecord {
     pub replay_timestamp: String,
     pub original_decision: String,
     pub replay_decision: String,
-    pub verification_status: String,  // "VERIFIED" | "FAILED" | "NOT_ATTEMPTED"
-    pub match_result: String,  // "MATCH" | "MISMATCH"
+    pub verification_status: String, // "VERIFIED" | "FAILED" | "NOT_ATTEMPTED"
+    pub match_result: String,        // "MATCH" | "MISMATCH"
     pub policy_hash: String,
     pub replay_count: u32,
     pub verification_details: Option<VerificationDetails>,
@@ -76,7 +76,7 @@ impl ReplayVerificationRecord {
     pub fn display(&self) -> String {
         format!(
             "TRAXES Replay Verification Record\n\nDecision ID:\n{}\n\nOriginal Decision:\n{}\n\nReplay Decision:\n{}\n\nVerification Status:\n{}\n\nMatch Result:\n{}\n\nReplay Count:\n{}",
-            self.decision_id, self.original_decision, self.replay_decision, 
+            self.decision_id, self.original_decision, self.replay_decision,
             self.verification_status, self.match_result, self.replay_count
         )
     }

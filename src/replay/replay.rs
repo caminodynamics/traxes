@@ -48,7 +48,7 @@ impl ReplayEngine {
     pub fn replay_from_artifact(&self, artifact: &AuditArtifact) -> ReplayResult {
         // Verify policy hash consistency before replay
         let policy_hash_matches = self.verify_policy_consistency(artifact);
-        
+
         // Reconstruct the ProposedAction from artifact data
         let action = self.reconstruct_action(artifact);
 
@@ -63,23 +63,28 @@ impl ReplayEngine {
                 && artifact.rule_evaluation.field == replay_decision.result.field
                 && artifact.rule_evaluation.operator == replay_decision.result.rule
                 && artifact.rule_evaluation.policy_value == replay_decision.result.policy_value
-                && artifact.sha256_hash == AuditArtifact::calculate_sha256_hash(
-                    &artifact.decision_id,
-                    &action,
-                    &replay_decision.decision,
-                    &replay_decision.result,
-                    &artifact.execution_status,
-                )
+                && artifact.sha256_hash
+                    == AuditArtifact::calculate_sha256_hash(
+                        &artifact.decision_id,
+                        &action,
+                        &replay_decision.decision,
+                        &replay_decision.result,
+                        &artifact.execution_status,
+                        &artifact.execution_outcome,
+                    )
         } else {
             true // Preserve legacy AWS fingerprint/replay compatibility.
         };
-        let match_status = policy_hash_matches && fingerprint_matches
+        let match_status = policy_hash_matches
+            && fingerprint_matches
             && (artifact.decision == replay_decision.decision);
 
         // Extract evaluation details
         let evaluation_details = EvaluationDetails {
             original_observed_value: artifact.rule_evaluation.observed_value.clone(),
-            replay_observed_value: if crate::server_policy::is_string_operator(&replay_decision.result.rule) {
+            replay_observed_value: if crate::server_policy::is_string_operator(
+                &replay_decision.result.rule,
+            ) {
                 replay_decision.result.observed_value_str.clone().into()
             } else {
                 serde_json::Number::from_f64(replay_decision.result.observed_value)
@@ -103,13 +108,19 @@ impl ReplayEngine {
         }
     }
 
-    pub fn replay_from_file(&self, artifact_path: &str) -> Result<ReplayResult, Box<dyn std::error::Error>> {
+    pub fn replay_from_file(
+        &self,
+        artifact_path: &str,
+    ) -> Result<ReplayResult, Box<dyn std::error::Error>> {
         let artifact_content = fs::read_to_string(artifact_path)?;
         let artifact: AuditArtifact = serde_json::from_str(&artifact_content)?;
         Ok(self.replay_from_artifact(&artifact))
     }
 
-    pub fn replay(&self, request: ReplayRequest) -> Result<ReplayResult, Box<dyn std::error::Error>> {
+    pub fn replay(
+        &self,
+        request: ReplayRequest,
+    ) -> Result<ReplayResult, Box<dyn std::error::Error>> {
         if let Some(policy_yaml) = request.policy_yaml {
             // Use custom policy
             let engine = Engine::with_policy(policy_yaml);
@@ -126,10 +137,16 @@ impl ReplayEngine {
         let mut parameters = serde_json::json!({});
         if let Some(obj) = parameters.as_object_mut() {
             if let Some(ref it) = artifact.proposed_action.parameters.instance_type {
-                obj.insert("instance_type".to_string(), serde_json::Value::String(it.clone()));
+                obj.insert(
+                    "instance_type".to_string(),
+                    serde_json::Value::String(it.clone()),
+                );
             }
             if let Some(icph) = artifact.proposed_action.parameters.instance_cost_per_hour {
-                obj.insert("instance_cost_per_hour".to_string(), serde_json::json!(icph));
+                obj.insert(
+                    "instance_cost_per_hour".to_string(),
+                    serde_json::json!(icph),
+                );
             }
             if let Some(ref p) = artifact.proposed_action.parameters.path {
                 obj.insert("path".to_string(), serde_json::Value::String(p.clone()));
@@ -160,9 +177,12 @@ impl ReplayEngine {
 
     /// Complete replay verification workflow
     /// Returns a formatted verification report
-    pub fn verify_artifact(&self, artifact_path: &str) -> Result<VerificationReport, Box<dyn std::error::Error>> {
+    pub fn verify_artifact(
+        &self,
+        artifact_path: &str,
+    ) -> Result<VerificationReport, Box<dyn std::error::Error>> {
         let replay_result = self.replay_from_file(artifact_path)?;
-        
+
         let verification_status = if replay_result.match_status {
             "PASS".to_string()
         } else {
@@ -213,7 +233,7 @@ mod tests {
     #[test]
     fn test_action_reconstruction() {
         let engine = ReplayEngine::with_default_policy().unwrap();
-        
+
         // Create a mock artifact
         let artifact = AuditArtifact {
             artifact_version: "1.0.0".to_string(),
@@ -269,19 +289,26 @@ mod tests {
             governance_info: None,
             evaluation_trace: None,
             execution_status: "executed".to_string(),
+            execution_outcome: None,
         };
 
         let action = engine.reconstruct_action(&artifact);
-        
+
         assert_eq!(action.tool, "aws_ec2_provision");
         assert_eq!(action.session_id, "session-123");
         assert_eq!(action.environment, "staging");
         assert_eq!(
-            action.parameters.get("instance_type").and_then(|v| v.as_str()),
+            action
+                .parameters
+                .get("instance_type")
+                .and_then(|v| v.as_str()),
             Some("t3.medium")
         );
         assert_eq!(
-            action.parameters.get("instance_cost_per_hour").and_then(|v| v.as_f64()),
+            action
+                .parameters
+                .get("instance_cost_per_hour")
+                .and_then(|v| v.as_f64()),
             Some(1.50)
         );
     }

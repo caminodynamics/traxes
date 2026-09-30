@@ -3,8 +3,8 @@
 use crate::action::ProposedAction;
 use crate::artifact::ArtifactLogger;
 use crate::cli_utils;
+use crate::coverage::{load_coverage_policy, CoverageTracker};
 use crate::traxes_engine::Engine;
-use crate::coverage::{CoverageTracker, load_coverage_policy};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ pub async fn run_evaluate_with_emitter(
         let current_dir_path = std::env::current_dir()
             .map(|d| d.join(&payload_path).to_string_lossy().to_string())
             .ok();
-        
+
         // If file exists in current directory, use it
         if let Some(ref path) = current_dir_path {
             if Path::new(path).exists() {
@@ -38,27 +38,41 @@ pub async fn run_evaluate_with_emitter(
             } else {
                 // Fall back to CARGO_MANIFEST_DIR for development builds
                 let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-                Path::new(cargo_manifest_dir).join(&payload_path).to_string_lossy().to_string()
+                Path::new(cargo_manifest_dir)
+                    .join(&payload_path)
+                    .to_string_lossy()
+                    .to_string()
             }
         } else {
             // Fall back to CARGO_MANIFEST_DIR if current dir unavailable
             let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-            Path::new(cargo_manifest_dir).join(&payload_path).to_string_lossy().to_string()
+            Path::new(cargo_manifest_dir)
+                .join(&payload_path)
+                .to_string_lossy()
+                .to_string()
         }
     };
 
     let payload_str = fs::read_to_string(&resolved_path)?;
-    
+
     let action: ProposedAction = serde_json::from_str(&payload_str)?;
 
     // Generate cryptographically unique IDs per request at the edge of the handler
     let trace_id = format!("trace_{}", Uuid::new_v4().to_string().replace("-", ""));
     let decision_id = format!("dec_{}", Uuid::new_v4().to_string().replace("-", ""));
 
-    let evaluation = engine.evaluate(&action);
+    let (evaluation, permit) = engine.evaluate_with_permit(&action, &decision_id);
+    let execution_outcome = crate::action::execute(&action, permit);
 
-    // Enforcement gate: execute action if ALLOW, block if DENY
-    let execution_status = crate::action::execute(&action, &evaluation.decision, &decision_id);
+    // Preserve authorization and execution failures as distinct statuses.
+    let execution_status = match execution_outcome {
+        crate::action::ExecutionOutcome::Executed => "executed".to_string(),
+        crate::action::ExecutionOutcome::ExecutionFailed(_) => "failed".to_string(),
+        crate::action::ExecutionOutcome::Unauthorized => "blocked".to_string(),
+    };
+
+    // Convert ExecutionOutcome to string for artifact
+    let execution_outcome_str = Some(format!("{:?}", execution_outcome));
 
     // Emit lightweight decision record instead of full execution event
     let decision_record = crate::traxes_engine::DecisionRecord {
@@ -73,34 +87,43 @@ pub async fn run_evaluate_with_emitter(
         decision_id: decision_id.clone(),
         trace_id: trace_id.clone(),
         execution_status: execution_status.clone(),
+        execution_outcome: execution_outcome_str.clone(),
     };
 
     // Emit decision record to bounded queue (non-blocking)
     match event_emitter.try_emit_record(decision_record) {
         Ok(_) => {}
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE FULL] Using synchronous fallback for {}", decision_id));
+            cli_utils::debug_log(format!(
+                "[EVENT QUEUE FULL] Using synchronous fallback for {}",
+                decision_id
+            ));
             // Fallback to synchronous artifact generation to preserve Invariant #2
-            let artifact = ArtifactLogger::generate_artifact(
+            let artifact = ArtifactLogger::generate_artifact_with_outcome(
                 &decision_id,
                 &action,
                 &evaluation,
                 engine.policy_hash(),
                 execution_status.clone(),
+                execution_outcome_str.clone(),
             );
             if let Err(e) = ArtifactLogger::write_sync(&artifact) {
                 return Err(format!("Failed to write artifact (fallback): {}", e).into());
             }
         }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-            cli_utils::debug_log(format!("[EVENT QUEUE CLOSED] Using synchronous fallback for {}", decision_id));
+            cli_utils::debug_log(format!(
+                "[EVENT QUEUE CLOSED] Using synchronous fallback for {}",
+                decision_id
+            ));
             // Fallback to synchronous artifact generation to preserve Invariant #2
-            let artifact = ArtifactLogger::generate_artifact(
+            let artifact = ArtifactLogger::generate_artifact_with_outcome(
                 &decision_id,
                 &action,
                 &evaluation,
                 engine.policy_hash(),
                 execution_status.clone(),
+                execution_outcome_str.clone(),
             );
             if let Err(e) = ArtifactLogger::write_sync(&artifact) {
                 return Err(format!("Failed to write artifact (fallback): {}", e).into());
@@ -109,9 +132,10 @@ pub async fn run_evaluate_with_emitter(
     }
 
     // Record coverage after artifact emission
-    let coverage_policy = load_coverage_policy().unwrap_or_else(|_| {
-        crate::coverage::CoveragePolicyConfig { tools: std::collections::HashMap::new() }
-    });
+    let coverage_policy =
+        load_coverage_policy().unwrap_or_else(|_| crate::coverage::CoveragePolicyConfig {
+            tools: std::collections::HashMap::new(),
+        });
 
     let coverage_tracker = CoverageTracker::default();
     if let Err(e) = coverage_tracker.record_coverage(
@@ -233,7 +257,11 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         // Use embedded allow payload for benchmarking
         // Write to temp file for compatibility with existing evaluation logic
         let temp_path = std::env::current_dir()
-            .map(|d| d.join("temp_benchmark_payload.json").to_string_lossy().to_string())
+            .map(|d| {
+                d.join("temp_benchmark_payload.json")
+                    .to_string_lossy()
+                    .to_string()
+            })
             .unwrap_or_else(|_| "temp_benchmark_payload.json".to_string());
         let embedded_payload = r#"{
   "session_id": "benchmark-001",
@@ -253,7 +281,10 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
             payload_path.to_string()
         } else {
             let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
-            Path::new(cargo_manifest_dir).join(payload_path).to_string_lossy().to_string()
+            Path::new(cargo_manifest_dir)
+                .join(payload_path)
+                .to_string_lossy()
+                .to_string()
         };
         resolved_path
     };
@@ -275,7 +306,13 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let results = if concurrency == 1 {
         run_single_threaded_benchmark(&base_engine, &action, iterations, write_artifacts)?
     } else {
-        run_multi_threaded_benchmark(&base_engine, &action, iterations, concurrency, write_artifacts)?
+        run_multi_threaded_benchmark(
+            &base_engine,
+            &action,
+            iterations,
+            concurrency,
+            write_artifacts,
+        )?
     };
 
     let benchmark_duration = benchmark_start.elapsed();
@@ -286,16 +323,19 @@ pub fn run_benchmark(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     println!("====================");
     println!("Total iterations: {}", results.len());
     println!("Total duration: {:.2}s", benchmark_duration.as_secs_f64());
-    
+
     let durations: Vec<u64> = results.iter().map(|r| r.duration_us).collect();
     let avg_duration_us = durations.iter().sum::<u64>() as f64 / durations.len() as f64;
     let min_duration_us = *durations.iter().min().unwrap_or(&0);
     let max_duration_us = *durations.iter().max().unwrap_or(&0);
-    
+
     println!("Avg evaluation time: {:.2}μs", avg_duration_us);
     println!("Min evaluation time: {}μs", min_duration_us);
     println!("Max evaluation time: {}μs", max_duration_us);
-    println!("Throughput: {:.2} ops/sec", results.len() as f64 / benchmark_duration.as_secs_f64());
+    println!(
+        "Throughput: {:.2} ops/sec",
+        results.len() as f64 / benchmark_duration.as_secs_f64()
+    );
 
     // Write results to JSON
     let results_path = "benchmark_results.json";
@@ -314,7 +354,7 @@ fn run_single_threaded_benchmark(
 ) -> Result<Vec<BenchmarkResult>, Box<dyn std::error::Error>> {
     let mut results = Vec::with_capacity(iterations);
     let thread_id = format!("{:?}", thread::current().id());
-    
+
     // Clone engine once for this thread (no Arc contention)
     let engine = base_engine.clone();
 
@@ -356,7 +396,9 @@ fn run_multi_threaded_benchmark(
 
             for i in 0..iterations {
                 if i % concurrency == worker_id {
-                    let result = run_single_evaluation(&engine, &action, i, &thread_id, write_artifacts).unwrap();
+                    let result =
+                        run_single_evaluation(&engine, &action, i, &thread_id, write_artifacts)
+                            .unwrap();
                     local_results.push(result);
                 }
             }
@@ -400,12 +442,12 @@ fn run_single_evaluation(
     let start_timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)?
         .as_micros() as u64;
-    
+
     // TIGHT TIMER: Measure ONLY evaluate_action_policy with no allocations/cloning/I/O
     let start = Instant::now();
     let result = engine.evaluate_raw(action);
     let duration_us = start.elapsed().as_micros() as u64;
-    
+
     // Post-compute timestamp after the timed section
     let end_timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)?
@@ -423,12 +465,16 @@ fn run_single_evaluation(
             decision: decision.to_string(),
             evaluation_latency_us: duration_us as f64,
         };
-        let artifact = ArtifactLogger::generate_artifact(
+        // Benchmarks evaluate policy only; no execution boundary is invoked.
+        let execution_status = "not_attempted".to_string();
+        let execution_outcome = None;
+        let artifact = ArtifactLogger::generate_artifact_with_outcome(
             &decision_id,
             action,
             &evaluation_decision,
             engine.policy_hash(),
-            if decision == "ALLOW" { "executed".to_string() } else { "blocked".to_string() },
+            execution_status,
+            execution_outcome,
         );
         let _ = ArtifactLogger::write_sync(&artifact);
     }
@@ -441,4 +487,62 @@ fn run_single_evaluation(
         duration_us,
         decision: decision.to_string(),
     })
+}
+
+#[cfg(test)]
+mod benchmark_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_artifacts_do_not_claim_execution() {
+        let sandbox =
+            std::env::temp_dir().join(format!("traxes-benchmark-outcomes-{}", Uuid::new_v4()));
+        fs::create_dir(&sandbox).unwrap();
+        for decision in ["ALLOW", "DENY"] {
+            let target = sandbox.join(format!("{decision}.txt"));
+            let path = target.to_string_lossy().replace('\\', "/");
+            let allowed = if decision == "ALLOW" {
+                &path
+            } else {
+                "never-allowed"
+            };
+            let engine = Engine::with_policy(format!(
+                "target:\n  tool: FILE_WRITE\nrules:\n  - name: paths\n    condition: payload.proposed_action.parameters.path not in [{}]\n    action: DENY",
+                serde_json::json!(allowed)
+            ));
+            let session = format!("benchmark-test-{}", Uuid::new_v4());
+            let action = ProposedAction {
+                tool: "FILE_WRITE".into(),
+                session_id: session.clone(),
+                environment: "test".into(),
+                parameters: serde_json::json!({"path": path, "content": "must not write"}),
+            };
+            let result = run_single_evaluation(&engine, &action, 0, "test", true).unwrap();
+            assert_eq!(result.decision, decision);
+            assert!(!target.exists());
+            let mut matches = 0;
+            for entry in fs::read_dir("artifacts").unwrap() {
+                let path = entry.unwrap().path();
+                let Ok(bytes) = fs::read(&path) else { continue };
+                let Ok(artifact) = serde_json::from_slice::<crate::artifact::AuditArtifact>(&bytes)
+                else {
+                    continue;
+                };
+                if artifact.execution_context.session_id != session {
+                    continue;
+                }
+                matches += 1;
+                assert_eq!(artifact.decision, decision);
+                assert_eq!(artifact.execution_status, "not_attempted");
+                assert!(artifact.execution_outcome.is_none());
+
+                fs::remove_file(path).unwrap();
+            }
+            assert_eq!(
+                matches, 1,
+                "benchmark must persist one evaluation-only artifact"
+            );
+        }
+        fs::remove_dir_all(sandbox).unwrap();
+    }
 }

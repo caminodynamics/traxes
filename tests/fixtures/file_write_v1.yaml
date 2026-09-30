@@ -1,0 +1,6 @@
+target:
+  tool: FILE_WRITE
+rules:
+  - name: legacy-path
+    condition: payload.proposed_action.parameters.path not in ["legacy-file-write.txt"]
+    action: DENY

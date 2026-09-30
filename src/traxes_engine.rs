@@ -1,6 +1,6 @@
 //! Unified execution engine: same evaluate path for HTTP server and CLI.
 
-use crate::action::ProposedAction;
+use crate::action::{ExecutionPermit, ProposedAction};
 use crate::cli_utils;
 use crate::policy_bundle::{evaluate_action_policy_with_rules, parse_policy_target_tool};
 use crate::server_policy::EvaluationResult;
@@ -19,7 +19,12 @@ pub struct ParsedRule {
 }
 
 impl ParsedRule {
-    pub fn new(operator: String, field: String, allowed_values: Vec<String>, rule_id: String) -> Self {
+    pub fn new(
+        operator: String,
+        field: String,
+        allowed_values: Vec<String>,
+        rule_id: String,
+    ) -> Self {
         Self {
             operator,
             field,
@@ -64,6 +69,8 @@ pub struct DecisionRecord {
     pub decision_id: String,
     pub trace_id: String,
     pub execution_status: String,
+    /// Actual enforcement outcome; absent when execution was not attempted.
+    pub execution_outcome: Option<String>,
 }
 
 impl EvaluationDecision {
@@ -76,14 +83,21 @@ impl EvaluationDecision {
 impl Engine {
     pub fn load_default_policies() -> Result<Self, io::Error> {
         // Only log diagnostic messages outside of demo mode or if debug is enabled
-        let show_diagnostics = !crate::cli_utils::is_demo_mode() || crate::cli_utils::is_debug_mode();
+        let show_diagnostics =
+            !crate::cli_utils::is_demo_mode() || crate::cli_utils::is_debug_mode();
         let policy_yaml = DEFAULT_POLICY_YAML.to_string();
         let policy_hash = calculate_hash_from_content(&policy_yaml);
         let parsed_rules = crate::policy_bundle::parse_policy_rules(&policy_yaml);
         if show_diagnostics {
             cli_utils::debug_log("[Traxes] Loading embedded policy (compile-time)");
-            cli_utils::debug_log(format!("[Traxes] Policy loaded successfully. Hash: {}", policy_hash));
-            cli_utils::debug_log(format!("[Traxes] Parsed {} rules from policy", parsed_rules.len()));
+            cli_utils::debug_log(format!(
+                "[Traxes] Policy loaded successfully. Hash: {}",
+                policy_hash
+            ));
+            cli_utils::debug_log(format!(
+                "[Traxes] Parsed {} rules from policy",
+                parsed_rules.len()
+            ));
         }
         Ok(Self {
             target_tool: parse_policy_target_tool(&policy_yaml),
@@ -110,7 +124,11 @@ impl Engine {
 
     pub fn evaluate(&self, action: &ProposedAction) -> EvaluationDecision {
         let start = Instant::now();
-        let result = evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules, self.target_tool.as_deref());
+        let result = evaluate_action_policy_with_rules(
+            action,
+            &self.bundle.parsed_rules,
+            self.target_tool.as_deref(),
+        );
         let evaluation_latency_us = start.elapsed().as_micros() as f64;
         let (decision, _): (&str, String) = cli_utils::normalize_decision(&result);
         EvaluationDecision {
@@ -120,10 +138,32 @@ impl Engine {
         }
     }
 
+    /// Evaluate action and create an ExecutionPermit if decision is ALLOW.
+    /// This is the ONLY public code path that can create execution permits.
+    /// External callers must use this method - they cannot create permits directly.
+    /// DENY decisions return None (no permit created).
+    pub fn evaluate_with_permit(
+        &self,
+        action: &ProposedAction,
+        decision_id: &str,
+    ) -> (EvaluationDecision, Option<ExecutionPermit>) {
+        let evaluation = self.evaluate(action);
+        let permit = if evaluation.decision == "ALLOW" {
+            ExecutionPermit::from_allow_decision(action, decision_id)
+        } else {
+            None
+        };
+        (evaluation, permit)
+    }
+
     /// Raw evaluation that directly calls evaluate_action_policy without any overhead.
     /// This is used for benchmarking to measure only the core evaluation logic.
     pub fn evaluate_raw(&self, action: &ProposedAction) -> EvaluationResult {
-        evaluate_action_policy_with_rules(action, &self.bundle.parsed_rules, self.target_tool.as_deref())
+        evaluate_action_policy_with_rules(
+            action,
+            &self.bundle.parsed_rules,
+            self.target_tool.as_deref(),
+        )
     }
 
     pub fn policy_hash(&self) -> &str {

@@ -7,7 +7,7 @@
 use serde_json::json;
 use std::fs; // Used in main() for setup/cleanup
 use std::path::PathBuf;
-use traxes_demo::action::{self, ProposedAction};
+use traxes_demo::action::{self, ExecutionOutcome, ProposedAction};
 use traxes_demo::artifact::ArtifactLogger;
 use traxes_demo::replay::ReplayEngine;
 use traxes_demo::traxes_engine::Engine;
@@ -31,6 +31,7 @@ const ALLOW_FILE_CONTENTS: &str = "traxes file_write_integration proof payload v
 struct RunOutcome {
     decision: String,
     artifact_path: String,
+    execution_outcome: ExecutionOutcome,
 }
 
 fn normalize_path(p: &PathBuf) -> String {
@@ -51,29 +52,43 @@ fn propose_and_execute(engine: &Engine, target: &PathBuf, label: &str) -> RunOut
     };
 
     // TRAXES evaluates BEFORE any filesystem side-effect.
-    let evaluation = engine.evaluate(&action);
     let decision_id = Uuid::new_v4().to_string();
 
-    // Execute through the central governance boundary.
-    // This handles the actual FILE_WRITE based on the decision.
-    let execution_status = action::execute(&action, &evaluation.decision, &decision_id);
+    // Use the new hardened execution boundary: create permit only if ALLOW
+    let (evaluation, permit) = engine.evaluate_with_permit(&action, &decision_id);
+
+    // Execute through the central governance boundary with authorization.
+    // This requires a valid permit for execution to proceed.
+    let execution_outcome = action::execute(&action, permit);
+
+    // Preserve authorization and execution failures as distinct statuses.
+    let execution_status = match execution_outcome {
+        ExecutionOutcome::Executed => "executed".to_string(),
+        ExecutionOutcome::ExecutionFailed(_) => "failed".to_string(),
+        ExecutionOutcome::Unauthorized => "blocked".to_string(),
+    };
+
+    // Convert ExecutionOutcome to string for artifact
+    let execution_outcome_str = Some(format!("{:?}", execution_outcome));
 
     // Generate artifact AFTER execute() so execution_status reflects what actually happened.
-    let artifact = ArtifactLogger::generate_artifact(
+    let artifact = ArtifactLogger::generate_artifact_with_outcome(
         &decision_id,
         &action,
         &evaluation,
         engine.policy_hash(),
         execution_status,
+        execution_outcome_str,
     );
     let artifact_path = artifact
         .write_to_file_sync()
         .expect("artifact write must succeed");
 
     println!(
-        "  [{}] decision={}  path={}  artifact={}",
+        "  [{}] decision={}  execution_outcome={:?}  path={}  artifact={}",
         label,
         evaluation.decision,
+        execution_outcome,
         target.display(),
         artifact_path
     );
@@ -81,6 +96,7 @@ fn propose_and_execute(engine: &Engine, target: &PathBuf, label: &str) -> RunOut
     RunOutcome {
         decision: evaluation.decision,
         artifact_path,
+        execution_outcome,
     }
 }
 
@@ -114,6 +130,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         allow.decision, "ALLOW",
         "ALLOW case: decision must be ALLOW"
     );
+    assert_eq!(
+        allow.execution_outcome,
+        ExecutionOutcome::Executed,
+        "ALLOW case: execution outcome must be Executed"
+    );
     assert!(
         allow_path.exists(),
         "ALLOW case: file MUST exist at {}",
@@ -125,7 +146,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "ALLOW case: file contents MUST match expected payload"
     );
     println!(
-        "  ALLOW proof: exists={}  contents_match={}",
+        "  ALLOW proof: decision={}  outcome={:?}  exists={}  contents_match={}",
+        allow.decision,
+        allow.execution_outcome,
         allow_path.exists(),
         allow_contents == ALLOW_FILE_CONTENTS
     );
@@ -133,13 +156,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[2/2] DENY case (path is NOT in allowlist)");
     let deny = propose_and_execute(&engine, &deny_path, "DENY");
     assert_eq!(deny.decision, "DENY", "DENY case: decision must be DENY");
+    assert_eq!(
+        deny.execution_outcome,
+        ExecutionOutcome::Unauthorized,
+        "DENY case: execution outcome must be Unauthorized"
+    );
     assert!(
         !deny_path.exists(),
         "DENY case: file MUST NOT exist at {}",
         deny_path.display()
     );
     println!(
-        "  DENY proof:  exists={} (expected false)",
+        "  DENY proof:  decision={}  outcome={:?}  exists={} (expected false)",
+        deny.decision,
+        deny.execution_outcome,
         deny_path.exists()
     );
 
