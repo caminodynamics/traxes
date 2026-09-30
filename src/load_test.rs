@@ -310,11 +310,7 @@ fn run_single_load_eval(
         TestMode::EvalWithArtifacts => {
             // Write artifact
             let decision_id = format!("dec_{}", Uuid::new_v4().to_string().replace("-", ""));
-            let execution_status = if evaluation.decision == "ALLOW" {
-                "executed".to_string()
-            } else {
-                "blocked".to_string()
-            };
+            let execution_status = "not_attempted".to_string();
             
             let artifact = ArtifactLogger::generate_artifact(
                 &decision_id,

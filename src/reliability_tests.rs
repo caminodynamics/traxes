@@ -610,11 +610,7 @@ fn test_modified_decision() -> ReliabilityTestResult {
         
         // Create artifact
         let decision_id = format!("dec_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-        let execution_status = if evaluation.decision == "ALLOW" {
-            "executed".to_string()
-        } else {
-            "blocked".to_string()
-        };
+        let execution_status = "not_attempted".to_string();
         
         let artifact = crate::artifact::ArtifactLogger::generate_artifact(
             &decision_id,
@@ -694,11 +690,7 @@ fn test_modified_policy_hash() -> ReliabilityTestResult {
         
         // Create artifact
         let decision_id = format!("dec_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-        let execution_status = if evaluation.decision == "ALLOW" {
-            "executed".to_string()
-        } else {
-            "blocked".to_string()
-        };
+        let execution_status = "not_attempted".to_string();
         
         let artifact = crate::artifact::ArtifactLogger::generate_artifact(
             &decision_id,
@@ -879,11 +871,7 @@ fn test_no_corrupted_artifacts() -> ReliabilityTestResult {
             for _ in 0..iterations {
                 let evaluation = engine.evaluate(&action);
                 let decision_id = format!("dec_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-                let execution_status = if evaluation.decision == "ALLOW" {
-                    "executed".to_string()
-                } else {
-                    "blocked".to_string()
-                };
+                let execution_status = "not_attempted".to_string();
                 
                 let artifact = crate::artifact::ArtifactLogger::generate_artifact(
                     &decision_id,
@@ -966,11 +954,7 @@ fn test_stable_replay_concurrent() -> ReliabilityTestResult {
     for _ in 0..(concurrency * iterations) {
         let evaluation = engine.evaluate(&action);
         let decision_id = format!("dec_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-        let execution_status = if evaluation.decision == "ALLOW" {
-            "executed".to_string()
-        } else {
-            "blocked".to_string()
-        };
+        let execution_status = "not_attempted".to_string();
         
         let artifact = crate::artifact::ArtifactLogger::generate_artifact(
             &decision_id,

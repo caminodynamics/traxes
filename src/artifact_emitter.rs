@@ -114,7 +114,7 @@ impl ArtifactEmitter {
             &evaluation_decision,
             &self.policy_hash,
             event.execution_status.clone(),
-            None, // execution_outcome not available in DecisionRecord
+            event.execution_outcome.clone(),
         );
 
         Ok(artifact)
@@ -206,4 +206,109 @@ pub fn create_event_channel(capacity: usize) -> (EventEmitter, mpsc::Receiver<Ex
     let (tx, rx) = mpsc::channel(capacity);
     let emitter = EventEmitter::new(vec![tx]);
     (emitter, rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        artifact::ArtifactLogger, evaluate::run_evaluate_with_emitter, traxes_engine::Engine,
+    };
+    use serde_json::json;
+    use std::fs;
+
+    #[tokio::test]
+    async fn cli_async_artifacts_preserve_success_failure_and_deny() {
+        let sandbox =
+            std::env::temp_dir().join(format!("traxes-outcomes-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&sandbox).unwrap();
+        for case in ["success", "failure", "deny"] {
+            let target = sandbox.join(format!("{case}.txt"));
+            if case == "failure" {
+                fs::create_dir(&target).unwrap();
+            }
+            let path = target.to_string_lossy().replace('\\', "/");
+            let allowed = if case == "deny" {
+                "never-allowed"
+            } else {
+                &path
+            };
+            let engine = Engine::with_policy(format!(
+                "target:\n  tool: FILE_WRITE\nrules:\n  - name: paths\n    condition: payload.proposed_action.parameters.path not in [{}]\n    action: DENY",
+                json!(allowed)
+            ));
+            let action = ProposedAction {
+                tool: "FILE_WRITE".into(),
+                session_id: case.into(),
+                environment: "test".into(),
+                parameters: json!({"path": path, "content": "actual bytes"}),
+            };
+            let payload = sandbox.join(format!("{case}.json"));
+            fs::write(&payload, serde_json::to_vec(&action).unwrap()).unwrap();
+            let (sender, mut receiver) = create_event_channel(1);
+            let result =
+                run_evaluate_with_emitter(payload.to_string_lossy().into(), sender, &engine)
+                    .await
+                    .unwrap();
+            let event = receiver.recv().await.unwrap();
+            let expected_decision = if case == "deny" { "DENY" } else { "ALLOW" };
+            assert_eq!(result.decision, expected_decision);
+            let outcome = event
+                .execution_outcome
+                .clone()
+                .expect("outcome lost in queue");
+            match case {
+                "success" => {
+                    assert_eq!(outcome, "Executed");
+                    assert_eq!(fs::read_to_string(&target).unwrap(), "actual bytes");
+                }
+                "failure" => {
+                    assert!(outcome.starts_with("ExecutionFailed("), "{outcome}");
+                    assert!(target.is_dir());
+                }
+                "deny" => {
+                    assert_eq!(outcome, "Unauthorized");
+                    assert!(!target.exists());
+                }
+                _ => unreachable!(),
+            }
+            let expected = ArtifactLogger::generate_artifact_with_outcome(
+                &event.decision_id,
+                &action,
+                &engine.evaluate(&action),
+                engine.policy_hash(),
+                event.execution_status.clone(),
+                Some(outcome.clone()),
+            );
+            let artifact_path = format!("artifacts/AuditArtifact_{}.json", event.decision_id);
+            let emitter = ArtifactEmitter::new(
+                receiver,
+                engine.policy_hash().into(),
+                Arc::new(AtomicU64::new(0)),
+            );
+            // Exercise the worker's actual persistence path, not only its builder.
+            emitter.process_event(event).await.unwrap();
+            let persisted: AuditArtifact =
+                serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
+            assert_eq!(persisted.decision, expected_decision);
+            assert_eq!(
+                persisted.execution_outcome.as_deref(),
+                Some(outcome.as_str())
+            );
+            assert_eq!(
+                persisted.execution_status,
+                if case == "success" {
+                    "executed"
+                } else if case == "failure" {
+                    "failed"
+                } else {
+                    "blocked"
+                }
+            );
+            assert_eq!(persisted.sha256_hash, expected.sha256_hash);
+
+            fs::remove_file(artifact_path).unwrap();
+        }
+        fs::remove_dir_all(sandbox).unwrap();
+    }
 }

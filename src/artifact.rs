@@ -36,7 +36,9 @@ pub struct AuditArtifact {
     pub side_effect_prevention: SideEffectPreventionInfo,
     pub governance_info: Option<GovernanceInfo>, // NEW: Governance coverage
     pub evaluation_trace: Option<EvaluationTrace>, // NEW: Evaluation trace
-    pub execution_status: String,                // Legacy field for backward compatibility
+    /// executed / failed / blocked / not_attempted. Retain stored legacy values
+    /// when reading artifacts: this field is fingerprint-bound for FILE_WRITE.
+    pub execution_status: String,
     pub execution_outcome: Option<String>, // NEW: Detailed execution outcome (Executed/ExecutionFailed/Unauthorized)
 }
 
@@ -184,21 +186,25 @@ impl AuditArtifact {
         // (list-aware) composition that includes the observed parameter value.
         let hash_input = if action.tool == "FILE_WRITE" {
             // Structured encoding binds all parameters (including path/content)
-            // without delimiter ambiguity. Include execution_outcome for hardening
-            serde_json::json!({
+            // without delimiter ambiguity. Absent outcomes retain the exact
+            // legacy v1 composition (not even an execution_outcome: null key).
+            let mut input = serde_json::json!({
                 "fingerprint_version": "file_write_v1",
                 "decision_id": decision_id,
                 "action": action,
                 "decision": decision,
                 "execution_status": execution_status,
-                "execution_outcome": execution_outcome,
                 "reason": evaluation_result.reason,
                 "policy_bundle": POLICY_BUNDLE,
                 "field": evaluation_result.field,
                 "operator": evaluation_result.rule,
                 "policy_value": evaluation_result.policy_value
-            })
-            .to_string()
+            });
+            if let Some(outcome) = execution_outcome {
+                input["fingerprint_version"] = "file_write_v2".into();
+                input["execution_outcome"] = outcome.clone().into();
+            }
+            input.to_string()
         } else if param_key == "instance_type" {
             // Reproduce HEAD composition exactly for instance_type.
             let instance_type = action

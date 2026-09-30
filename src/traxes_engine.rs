@@ -69,6 +69,8 @@ pub struct DecisionRecord {
     pub decision_id: String,
     pub trace_id: String,
     pub execution_status: String,
+    /// Actual enforcement outcome; absent when execution was not attempted.
+    pub execution_outcome: Option<String>,
 }
 
 impl EvaluationDecision {

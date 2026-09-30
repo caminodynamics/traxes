@@ -451,7 +451,7 @@ rules:
         let replay_engine = ReplayEngine::new(engine);
         let exec_status = match exec_outcome {
             crate::action::ExecutionOutcome::Executed => "executed".to_string(),
-            crate::action::ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
+            crate::action::ExecutionOutcome::ExecutionFailed(_) => "failed".to_string(),
             crate::action::ExecutionOutcome::Unauthorized => "blocked".to_string(),
         };
         let execution_outcome_str = Some(format!("{:?}", exec_outcome));
@@ -511,6 +511,7 @@ rules:
             decision_id: "test-dec-id".to_string(),
             trace_id: "test-trace-id".to_string(),
             execution_status: "executed".to_string(),
+            execution_outcome: None,
         };
 
         // Convert to ExecutionEvent (async worker does this)

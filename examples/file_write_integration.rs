@@ -61,10 +61,10 @@ fn propose_and_execute(engine: &Engine, target: &PathBuf, label: &str) -> RunOut
     // This requires a valid permit for execution to proceed.
     let execution_outcome = action::execute(&action, permit);
 
-    // Convert ExecutionOutcome to legacy execution_status string for artifact compatibility
+    // Preserve authorization and execution failures as distinct statuses.
     let execution_status = match execution_outcome {
         ExecutionOutcome::Executed => "executed".to_string(),
-        ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
+        ExecutionOutcome::ExecutionFailed(_) => "failed".to_string(),
         ExecutionOutcome::Unauthorized => "blocked".to_string(),
     };
 

@@ -594,22 +594,16 @@ async fn evaluate_action(
         sleep(Duration::from_millis(150)).await;
     }
 
-    let evaluation = state.engine.evaluate(&action);
-
-    // Enforcement gate: create permit if ALLOW, then execute with authorization
-    let permit = if evaluation.decision == "ALLOW" {
-        action::ExecutionPermit::from_allow_decision(&action, &decision_id)
-    } else {
-        None
-    };
+    let (evaluation, permit) = state.engine.evaluate_with_permit(&action, &decision_id);
     let execution_outcome = action::execute(&action, permit);
 
-    // Convert ExecutionOutcome to legacy execution_status string for backward compatibility
+    // Preserve authorization and execution failures as distinct statuses.
     let execution_status = match execution_outcome {
         action::ExecutionOutcome::Executed => "executed".to_string(),
-        action::ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
+        action::ExecutionOutcome::ExecutionFailed(_) => "failed".to_string(),
         action::ExecutionOutcome::Unauthorized => "blocked".to_string(),
     };
+    let execution_outcome_str = Some(format!("{:?}", execution_outcome));
 
     if !cli_utils::is_demo_mode() {
         sleep(Duration::from_millis(100)).await;
@@ -631,6 +625,7 @@ async fn evaluate_action(
         decision_id: decision_id.clone(),
         trace_id: trace_id.clone(),
         execution_status: execution_status.clone(),
+        execution_outcome: execution_outcome_str.clone(),
     };
 
     // Emit decision record to bounded queue (non-blocking)
@@ -643,12 +638,13 @@ async fn evaluate_action(
                 decision_id
             ));
             // Fallback to synchronous artifact generation to preserve Invariant #2
-            let artifact = ArtifactLogger::generate_artifact(
+            let artifact = ArtifactLogger::generate_artifact_with_outcome(
                 &decision_id,
                 &action,
                 &evaluation,
                 state.engine.policy_hash(),
                 execution_status.clone(),
+                execution_outcome_str.clone(),
             );
             if let Err(e) = ArtifactLogger::write_sync(&artifact) {
                 return Err((
@@ -665,12 +661,13 @@ async fn evaluate_action(
                 decision_id
             ));
             // Fallback to synchronous artifact generation to preserve Invariant #2
-            let artifact = ArtifactLogger::generate_artifact(
+            let artifact = ArtifactLogger::generate_artifact_with_outcome(
                 &decision_id,
                 &action,
                 &evaluation,
                 state.engine.policy_hash(),
                 execution_status.clone(),
+                execution_outcome_str.clone(),
             );
             if let Err(e) = ArtifactLogger::write_sync(&artifact) {
                 return Err((
@@ -721,4 +718,114 @@ async fn evaluate_action(
             artifact_io_time_us: 0.0, // Now handled by event emitter
         },
     }))
+}
+
+#[cfg(test)]
+mod execution_outcome_tests {
+    use super::*;
+    use crate::artifact::AuditArtifact;
+
+    #[tokio::test]
+    async fn http_async_and_both_fallbacks_preserve_outcomes() {
+        let sandbox = std::env::temp_dir().join(format!("traxes-http-outcomes-{}", Uuid::new_v4()));
+        std::fs::create_dir(&sandbox).unwrap();
+        for mode in ["async", "full", "closed"] {
+            for case in ["success", "failure", "deny"] {
+                let target = sandbox.join(format!("{mode}-{case}.txt"));
+                if case == "failure" {
+                    std::fs::create_dir(&target).unwrap();
+                }
+                let path = target.to_string_lossy().replace('\\', "/");
+                let allowed = if case == "deny" {
+                    "never-allowed"
+                } else {
+                    &path
+                };
+                let engine = Arc::new(Engine::with_policy(format!(
+                    "target:\n  tool: FILE_WRITE\nrules:\n  - name: paths\n    condition: payload.proposed_action.parameters.path not in [{}]\n    action: DENY",
+                    serde_json::json!(allowed)
+                )));
+                let action = ProposedAction {
+                    tool: "FILE_WRITE".into(),
+                    session_id: format!("{mode}-{case}"),
+                    environment: "test".into(),
+                    parameters: serde_json::json!({"path": path, "content": "http bytes"}),
+                };
+                let (sender, receiver) = artifact_emitter::create_event_channel(1);
+                let mut receiver = Some(receiver);
+                if mode == "closed" {
+                    drop(receiver.take());
+                }
+                if mode == "full" {
+                    let evaluation = engine.evaluate(&action);
+                    sender
+                        .try_emit_record(crate::traxes_engine::DecisionRecord {
+                            decision: evaluation.decision.clone(),
+                            session_id: action.session_id.clone(),
+                            tool: action.tool.clone(),
+                            environment: action.environment.clone(),
+                            parameters: action.parameters.clone(),
+                            policy_hash: engine.policy_hash().into(),
+                            evaluation_result: evaluation.result,
+                            evaluation_latency_us: evaluation.evaluation_latency_us,
+                            decision_id: "queue-filler".into(),
+                            trace_id: "queue-filler".into(),
+                            execution_status: "not_attempted".into(),
+                            execution_outcome: None,
+                        })
+                        .unwrap();
+                }
+                let state = AppState {
+                    event_emitter: sender,
+                    engine: engine.clone(),
+                };
+                let response = evaluate_action(State(state), Json(action)).await.unwrap().0;
+                if mode == "async" {
+                    ArtifactEmitter::new(
+                        receiver.take().unwrap(),
+                        engine.policy_hash().into(),
+                        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    )
+                    .run()
+                    .await;
+                }
+                let artifact: AuditArtifact =
+                    serde_json::from_slice(&std::fs::read(&response.artifact_path).unwrap())
+                        .unwrap();
+                assert_eq!(
+                    artifact.decision,
+                    if case == "deny" { "DENY" } else { "ALLOW" }
+                );
+                assert_eq!(
+                    artifact.execution_status,
+                    if case == "success" {
+                        "executed"
+                    } else if case == "failure" {
+                        "failed"
+                    } else {
+                        "blocked"
+                    }
+                );
+                let outcome = artifact.execution_outcome.as_deref().unwrap();
+                match case {
+                    "success" => {
+                        assert_eq!(outcome, "Executed");
+                        assert_eq!(std::fs::read_to_string(&target).unwrap(), "http bytes");
+                    }
+                    "failure" => {
+                        assert!(outcome.starts_with("ExecutionFailed("), "{mode}: {outcome}");
+                        assert!(target.is_dir());
+                    }
+                    "deny" => {
+                        assert_eq!(outcome, "Unauthorized");
+                        assert!(!target.exists());
+                    }
+                    _ => unreachable!(),
+                }
+
+                std::fs::remove_file(response.artifact_path).unwrap();
+            }
+        }
+        std::fs::remove_dir_all(sandbox).unwrap();
+    }
 }

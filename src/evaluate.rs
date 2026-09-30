@@ -61,20 +61,13 @@ pub async fn run_evaluate_with_emitter(
     let trace_id = format!("trace_{}", Uuid::new_v4().to_string().replace("-", ""));
     let decision_id = format!("dec_{}", Uuid::new_v4().to_string().replace("-", ""));
 
-    let evaluation = engine.evaluate(&action);
-
-    // Enforcement gate: create permit if ALLOW, then execute with authorization
-    let permit = if evaluation.decision == "ALLOW" {
-        crate::action::ExecutionPermit::from_allow_decision(&action, &decision_id)
-    } else {
-        None
-    };
+    let (evaluation, permit) = engine.evaluate_with_permit(&action, &decision_id);
     let execution_outcome = crate::action::execute(&action, permit);
 
-    // Convert ExecutionOutcome to legacy execution_status string for backward compatibility
+    // Preserve authorization and execution failures as distinct statuses.
     let execution_status = match execution_outcome {
         crate::action::ExecutionOutcome::Executed => "executed".to_string(),
-        crate::action::ExecutionOutcome::ExecutionFailed(_) => "blocked".to_string(),
+        crate::action::ExecutionOutcome::ExecutionFailed(_) => "failed".to_string(),
         crate::action::ExecutionOutcome::Unauthorized => "blocked".to_string(),
     };
 
@@ -94,6 +87,7 @@ pub async fn run_evaluate_with_emitter(
         decision_id: decision_id.clone(),
         trace_id: trace_id.clone(),
         execution_status: execution_status.clone(),
+        execution_outcome: execution_outcome_str.clone(),
     };
 
     // Emit decision record to bounded queue (non-blocking)
@@ -471,16 +465,9 @@ fn run_single_evaluation(
             decision: decision.to_string(),
             evaluation_latency_us: duration_us as f64,
         };
-        let execution_status = if decision == "ALLOW" {
-            "executed".to_string()
-        } else {
-            "blocked".to_string()
-        };
-        let execution_outcome = if decision == "ALLOW" {
-            Some("Executed".to_string())
-        } else {
-            Some("Unauthorized".to_string())
-        };
+        // Benchmarks evaluate policy only; no execution boundary is invoked.
+        let execution_status = "not_attempted".to_string();
+        let execution_outcome = None;
         let artifact = ArtifactLogger::generate_artifact_with_outcome(
             &decision_id,
             action,
@@ -500,4 +487,62 @@ fn run_single_evaluation(
         duration_us,
         decision: decision.to_string(),
     })
+}
+
+#[cfg(test)]
+mod benchmark_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_artifacts_do_not_claim_execution() {
+        let sandbox =
+            std::env::temp_dir().join(format!("traxes-benchmark-outcomes-{}", Uuid::new_v4()));
+        fs::create_dir(&sandbox).unwrap();
+        for decision in ["ALLOW", "DENY"] {
+            let target = sandbox.join(format!("{decision}.txt"));
+            let path = target.to_string_lossy().replace('\\', "/");
+            let allowed = if decision == "ALLOW" {
+                &path
+            } else {
+                "never-allowed"
+            };
+            let engine = Engine::with_policy(format!(
+                "target:\n  tool: FILE_WRITE\nrules:\n  - name: paths\n    condition: payload.proposed_action.parameters.path not in [{}]\n    action: DENY",
+                serde_json::json!(allowed)
+            ));
+            let session = format!("benchmark-test-{}", Uuid::new_v4());
+            let action = ProposedAction {
+                tool: "FILE_WRITE".into(),
+                session_id: session.clone(),
+                environment: "test".into(),
+                parameters: serde_json::json!({"path": path, "content": "must not write"}),
+            };
+            let result = run_single_evaluation(&engine, &action, 0, "test", true).unwrap();
+            assert_eq!(result.decision, decision);
+            assert!(!target.exists());
+            let mut matches = 0;
+            for entry in fs::read_dir("artifacts").unwrap() {
+                let path = entry.unwrap().path();
+                let Ok(bytes) = fs::read(&path) else { continue };
+                let Ok(artifact) = serde_json::from_slice::<crate::artifact::AuditArtifact>(&bytes)
+                else {
+                    continue;
+                };
+                if artifact.execution_context.session_id != session {
+                    continue;
+                }
+                matches += 1;
+                assert_eq!(artifact.decision, decision);
+                assert_eq!(artifact.execution_status, "not_attempted");
+                assert!(artifact.execution_outcome.is_none());
+
+                fs::remove_file(path).unwrap();
+            }
+            assert_eq!(
+                matches, 1,
+                "benchmark must persist one evaluation-only artifact"
+            );
+        }
+        fs::remove_dir_all(sandbox).unwrap();
+    }
 }

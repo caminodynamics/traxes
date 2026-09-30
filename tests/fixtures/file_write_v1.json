@@ -1,0 +1,75 @@
+{
+  "artifact_version": "2.0.0",
+  "artifact_type": "pre_execution_decision",
+  "decision_id": "legacy-v1",
+  "timestamp": "2026-09-01T00:00:00Z",
+  "decision": "ALLOW",
+  "tool": "FILE_WRITE",
+  "environment": "sandbox",
+  "reason": "",
+  "policy_bundle": "infra-cost-limit-v1",
+  "policy_hash": "f4630b499478fe04ab92fdd6a8eed453d276e446bbb5cbc7181933aeca45fe56",
+  "sha256_hash": "2775f65be4e1fa7836b3d0e80a7f2a6d98e9b4507660b7982637bf578e3fc3a3",
+  "engine": {
+    "name": "Traxes",
+    "engine_version": "1.0.0",
+    "policy_bundle_id": "infra-cost-limit-v1"
+  },
+  "policy_info": {
+    "policy_id": "infra-cost-limit-v1",
+    "policy_version": "1.0.0",
+    "policy_hash": "f4630b499478fe04ab92fdd6a8eed453d276e446bbb5cbc7181933aeca45fe56"
+  },
+  "execution_context": {
+    "session_id": "legacy-session",
+    "trace_id": "legacy-v1"
+  },
+  "proposed_action": {
+    "tool": "FILE_WRITE",
+    "environment": "sandbox",
+    "parameters": {
+      "instance_type": null,
+      "instance_cost_per_hour": null,
+      "path": "legacy-file-write.txt",
+      "content": "legacy bytes"
+    }
+  },
+  "rule_evaluation": {
+    "rule_id": "infra-cost-limit",
+    "field": "proposed_action.parameters.path",
+    "observed_value": "legacy-file-write.txt",
+    "operator": "not_in",
+    "policy_value": 0.0,
+    "evaluation_expression": "proposed_action.parameters.path not_in policy",
+    "evaluation_result": false,
+    "rule_order": 0
+  },
+  "rules_evaluated": [
+    {
+      "rule_id": "infra-cost-limit",
+      "field": "proposed_action.parameters.path",
+      "observed_value": "legacy-file-write.txt",
+      "operator": "not_in",
+      "policy_value": 0.0,
+      "evaluation_expression": "proposed_action.parameters.path not_in policy",
+      "evaluation_result": false,
+      "rule_order": 0
+    }
+  ],
+  "performance": {
+    "evaluation_latency_us": 30.0,
+    "decision_latency_us": 4.8,
+    "artifact_write_latency_us": 41.7
+  },
+  "side_effect_prevention": {
+    "decision_effect": "ALLOW"
+  },
+  "governance_info": {
+    "coverage_status": "GOVERNED",
+    "endpoint": "FILE_WRITE::sandbox",
+    "enforcement_hit": true,
+    "coverage_event_type": "EnforcedPath"
+  },
+  "evaluation_trace": null,
+  "execution_status": "executed"
+}

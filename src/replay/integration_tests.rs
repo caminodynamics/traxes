@@ -1,6 +1,6 @@
 use crate::action::ProposedAction;
-use crate::artifact::{AuditArtifact, ArtifactLogger};
-use crate::replay::{ReplayEngine, ReplayRequest, ReplayResult, Verifier, VerificationStatus};
+use crate::artifact::{ArtifactLogger, AuditArtifact};
+use crate::replay::{ReplayEngine, ReplayRequest, ReplayResult, VerificationStatus, Verifier};
 use crate::traxes_engine::Engine;
 use serde_json::json;
 use std::fs;
@@ -20,28 +20,54 @@ fn test_file_write_fingerprint_replay_rejects_tampering_without_execution() {
         "target:\n  tool: FILE_WRITE\nrules:\n  - name: paths\n    condition: payload.proposed_action.parameters.path not in [\"{original}\", \"{alternate}\"]\n    action: DENY\n"
     ));
     let action = ProposedAction {
-        tool: "FILE_WRITE".to_string(), session_id: "integrity".to_string(),
+        tool: "FILE_WRITE".to_string(),
+        session_id: "integrity".to_string(),
         environment: "sandbox".to_string(),
         parameters: json!({"path": original, "content": "audited bytes", "metadata": {"owner": "test"}}),
     };
     let evaluation = engine.evaluate(&action);
     assert_eq!(evaluation.decision, "ALLOW");
     let artifact = ArtifactLogger::generate_artifact(
-        "integrity-id", &action, &evaluation, engine.policy_hash(), "executed".to_string(),
+        "integrity-id",
+        &action,
+        &evaluation,
+        engine.policy_hash(),
+        "executed".to_string(),
     );
     // Exercise the serialized artifact representation, too.
-    let artifact: AuditArtifact = serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
+    let artifact: AuditArtifact =
+        serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
     let replay = ReplayEngine::new(engine);
     let intact = replay.replay_from_artifact(&artifact);
     assert!(intact.match_status);
     assert_eq!(intact.replay_decision, "ALLOW");
     assert!(Verifier::verify(&intact, None).is_match());
-    for mutation in ["content", "path", "metadata", "session", "hash", "operator", "execution_status"] {
+    for mutation in [
+        "content",
+        "path",
+        "metadata",
+        "session",
+        "hash",
+        "operator",
+        "execution_status",
+    ] {
         let mut changed = artifact.clone();
         match mutation {
-            "content" => { changed.proposed_action.parameters.extra.insert("content".to_string(), json!("tampered bytes")); }
+            "content" => {
+                changed
+                    .proposed_action
+                    .parameters
+                    .extra
+                    .insert("content".to_string(), json!("tampered bytes"));
+            }
             "path" => changed.proposed_action.parameters.path = Some(alternate.clone()),
-            "metadata" => { changed.proposed_action.parameters.extra.insert("metadata".to_string(), json!({"owner": "attacker"})); }
+            "metadata" => {
+                changed
+                    .proposed_action
+                    .parameters
+                    .extra
+                    .insert("metadata".to_string(), json!({"owner": "attacker"}));
+            }
             "session" => changed.execution_context.session_id = "tampered-session".to_string(),
             "hash" => changed.sha256_hash = "invalid".to_string(),
             "operator" => changed.rule_evaluation.operator = "in_list".to_string(),
@@ -54,8 +80,14 @@ fn test_file_write_fingerprint_replay_rejects_tampering_without_execution() {
         assert!(Verifier::verify(&result, None).is_mismatch());
         assert!(Verifier::verify_with_tolerance(&result, 1.0).is_mismatch());
     }
-    assert!(!original_path.exists(), "replay must never create the original target");
-    assert!(!alternate_path.exists(), "replay must never create the altered target");
+    assert!(
+        !original_path.exists(),
+        "replay must never create the original target"
+    );
+    assert!(
+        !alternate_path.exists(),
+        "replay must never create the altered target"
+    );
     fs::remove_dir(&sandbox).unwrap();
 }
 
@@ -63,39 +95,63 @@ fn test_file_write_fingerprint_replay_rejects_tampering_without_execution() {
 fn test_target_mismatch_string_evidence_survives_async_artifact_and_replay() {
     let engine = Engine::load_default_policies().unwrap();
     let action = ProposedAction {
-        tool: "FILE_WRITE".to_string(), session_id: "mismatch-evidence".to_string(),
+        tool: "FILE_WRITE".to_string(),
+        session_id: "mismatch-evidence".to_string(),
         environment: "staging".to_string(),
         parameters: json!({"path": "never-created.txt", "content": "blocked", "instance_type": "t3.small"}),
     };
     let evaluation = engine.evaluate(&action);
     assert_eq!(evaluation.decision, "DENY");
     let sync = ArtifactLogger::generate_artifact(
-        "mismatch-id", &action, &evaluation, engine.policy_hash(), "blocked".to_string(),
+        "mismatch-id",
+        &action,
+        &evaluation,
+        engine.policy_hash(),
+        "blocked".to_string(),
     );
-    let event = crate::execution_event::ExecutionEvent::from_record(crate::traxes_engine::DecisionRecord {
-        decision: evaluation.decision.clone(), session_id: action.session_id.clone(),
-        tool: action.tool.clone(), environment: action.environment.clone(),
-        parameters: action.parameters.clone(), policy_hash: engine.policy_hash().to_string(),
-        evaluation_result: evaluation.result.clone(), evaluation_latency_us: evaluation.evaluation_latency_us,
-        decision_id: "mismatch-id".to_string(), trace_id: "trace".to_string(),
-        execution_status: "blocked".to_string(),
-    });
+    let event =
+        crate::execution_event::ExecutionEvent::from_record(crate::traxes_engine::DecisionRecord {
+            decision: evaluation.decision.clone(),
+            session_id: action.session_id.clone(),
+            tool: action.tool.clone(),
+            environment: action.environment.clone(),
+            parameters: action.parameters.clone(),
+            policy_hash: engine.policy_hash().to_string(),
+            evaluation_result: evaluation.result.clone(),
+            evaluation_latency_us: evaluation.evaluation_latency_us,
+            decision_id: "mismatch-id".to_string(),
+            trace_id: "trace".to_string(),
+            execution_status: "blocked".to_string(),
+            execution_outcome: None,
+        });
     let (_, rx) = tokio::sync::mpsc::channel(1);
     let emitter = crate::artifact_emitter::ArtifactEmitter::new(
-        rx, engine.policy_hash().to_string(), std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        rx,
+        engine.policy_hash().to_string(),
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
     );
     let queued = emitter.event_to_artifact(event).unwrap();
     let replay = ReplayEngine::new(engine);
     for artifact in [sync, queued] {
         assert_eq!(artifact.rule_evaluation.operator, "target_tool_match");
         assert_eq!(artifact.rule_evaluation.observed_value, json!("FILE_WRITE"));
-        assert_eq!(artifact.rules_evaluated.as_ref().unwrap()[0].observed_value, json!("FILE_WRITE"));
-        let artifact: AuditArtifact = serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
+        assert_eq!(
+            artifact.rules_evaluated.as_ref().unwrap()[0].observed_value,
+            json!("FILE_WRITE")
+        );
+        let artifact: AuditArtifact =
+            serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
         let result = replay.replay_from_artifact(&artifact);
         assert!(result.match_status);
         assert_eq!(result.replay_decision, "DENY");
-        assert_eq!(result.evaluation_details.original_observed_value, json!("FILE_WRITE"));
-        assert_eq!(result.evaluation_details.replay_observed_value, json!("FILE_WRITE"));
+        assert_eq!(
+            result.evaluation_details.original_observed_value,
+            json!("FILE_WRITE")
+        );
+        assert_eq!(
+            result.evaluation_details.replay_observed_value,
+            json!("FILE_WRITE")
+        );
     }
 }
 
@@ -103,7 +159,7 @@ fn test_target_mismatch_string_evidence_survives_async_artifact_and_replay() {
 fn test_end_to_end_replay_match() {
     // Setup: Create an engine and evaluate an action
     let engine = Engine::load_default_policies().unwrap();
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -117,7 +173,7 @@ fn test_end_to_end_replay_match() {
     // Evaluate the action
     let evaluation = engine.evaluate(&action);
     let decision_id = Uuid::new_v4().to_string();
-    
+
     // Create an artifact from the evaluation
     let artifact = ArtifactLogger::generate_artifact(
         &decision_id,
@@ -133,7 +189,10 @@ fn test_end_to_end_replay_match() {
 
     // Verify the replay matches
     assert!(replay_result.match_status);
-    assert_eq!(replay_result.original_decision, replay_result.replay_decision);
+    assert_eq!(
+        replay_result.original_decision,
+        replay_result.replay_decision
+    );
     assert_eq!(replay_result.decision_id, decision_id);
 }
 
@@ -141,7 +200,7 @@ fn test_end_to_end_replay_match() {
 fn test_replay_from_file() {
     // Create a temporary artifact file
     let engine = Engine::load_default_policies().unwrap();
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -193,7 +252,7 @@ rules:
 "#;
 
     let engine = Engine::load_default_policies().unwrap();
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -231,7 +290,7 @@ rules:
 
     assert!(replay_result.is_ok());
     let result = replay_result.unwrap();
-    
+
     // With custom policy, decision might differ
     // The important part is that replay works with custom policy
     assert_eq!(result.decision_id, decision_id);
@@ -244,7 +303,7 @@ rules:
 fn test_verification_match() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -276,7 +335,7 @@ fn test_verification_match() {
 fn test_verification_policy_mismatch() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -298,11 +357,14 @@ fn test_verification_policy_mismatch() {
     );
 
     let replay_result = replay_engine.replay_from_artifact(&artifact);
-    
+
     // Verify with wrong policy hash
     let verification = Verifier::verify(&replay_result, Some("wrong-policy-hash"));
 
-    assert_eq!(verification.status, VerificationStatus::PolicyVersionMismatch);
+    assert_eq!(
+        verification.status,
+        VerificationStatus::PolicyVersionMismatch
+    );
     assert!(!verification.is_match());
 }
 
@@ -310,7 +372,7 @@ fn test_verification_policy_mismatch() {
 fn test_multiple_replays_consistency() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -346,7 +408,7 @@ fn test_multiple_replays_consistency() {
 fn test_replay_deny_scenario() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     // Action that should be denied (high cost)
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
@@ -379,7 +441,7 @@ fn test_replay_deny_scenario() {
 fn test_policy_consistency_check() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -409,7 +471,7 @@ fn test_policy_consistency_check() {
 fn test_replay_result_serialization_roundtrip() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -437,7 +499,10 @@ fn test_replay_result_serialization_roundtrip() {
     let deserialized: ReplayResult = serde_json::from_str(&serialized).unwrap();
 
     assert_eq!(deserialized.decision_id, replay_result.decision_id);
-    assert_eq!(deserialized.original_decision, replay_result.original_decision);
+    assert_eq!(
+        deserialized.original_decision,
+        replay_result.original_decision
+    );
     assert_eq!(deserialized.replay_decision, replay_result.replay_decision);
     assert_eq!(deserialized.match_status, replay_result.match_status);
 }
@@ -446,7 +511,7 @@ fn test_replay_result_serialization_roundtrip() {
 fn test_verification_with_tolerance() {
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -468,7 +533,7 @@ fn test_verification_with_tolerance() {
     );
 
     let replay_result = replay_engine.replay_from_artifact(&artifact);
-    
+
     // Verify with tolerance
     let verification = Verifier::verify_with_tolerance(&replay_result, 0.01);
     assert_eq!(verification.status, VerificationStatus::Match);
@@ -481,7 +546,7 @@ fn test_replay_verification_success() {
     // Given: valid artifact with unchanged policy
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -526,7 +591,7 @@ fn test_replay_verification_mismatch() {
     // Given: artifact with modified policy
     let engine = Engine::load_default_policies().unwrap();
     let _replay_engine = ReplayEngine::new(engine.clone());
-    
+
     // Use an action that will be ALLOW with default policy but DENY with stricter policy
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
@@ -584,7 +649,7 @@ fn test_artifact_reconstruction() {
     // Verify that the artifact contains enough information to recreate the decision request
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let original_action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session-123".to_string(),
@@ -611,14 +676,29 @@ fn test_artifact_reconstruction() {
     // Verify all critical fields are preserved
     assert_eq!(reconstructed_action.tool, original_action.tool);
     assert_eq!(reconstructed_action.session_id, original_action.session_id);
-    assert_eq!(reconstructed_action.environment, original_action.environment);
     assert_eq!(
-        reconstructed_action.parameters.get("instance_type").and_then(|v: &serde_json::Value| v.as_str()),
-        original_action.parameters.get("instance_type").and_then(|v: &serde_json::Value| v.as_str())
+        reconstructed_action.environment,
+        original_action.environment
     );
     assert_eq!(
-        reconstructed_action.parameters.get("instance_cost_per_hour").and_then(|v: &serde_json::Value| v.as_f64()),
-        original_action.parameters.get("instance_cost_per_hour").and_then(|v: &serde_json::Value| v.as_f64())
+        reconstructed_action
+            .parameters
+            .get("instance_type")
+            .and_then(|v: &serde_json::Value| v.as_str()),
+        original_action
+            .parameters
+            .get("instance_type")
+            .and_then(|v: &serde_json::Value| v.as_str())
+    );
+    assert_eq!(
+        reconstructed_action
+            .parameters
+            .get("instance_cost_per_hour")
+            .and_then(|v: &serde_json::Value| v.as_f64()),
+        original_action
+            .parameters
+            .get("instance_cost_per_hour")
+            .and_then(|v: &serde_json::Value| v.as_f64())
     );
 }
 
@@ -627,7 +707,7 @@ fn test_serialization_roundtrip() {
     // Verify artifact can be saved, loaded, and replay still succeeds
     let engine = Engine::load_default_policies().unwrap();
     let replay_engine = ReplayEngine::new(engine.clone());
-    
+
     let action = ProposedAction {
         tool: "aws_ec2_provision".to_string(),
         session_id: "test-session".to_string(),
@@ -665,7 +745,10 @@ fn test_serialization_roundtrip() {
     // Replay loaded artifact
     let replay_result = replay_engine.replay_from_artifact(&loaded_artifact);
     assert!(replay_result.match_status);
-    assert_eq!(replay_result.original_decision, replay_result.replay_decision);
+    assert_eq!(
+        replay_result.original_decision,
+        replay_result.replay_decision
+    );
 
     // Cleanup
     fs::remove_file(&artifact_path).ok();
@@ -683,7 +766,7 @@ fn test_verification_report_display() {
     };
 
     let display_output = report.display();
-    
+
     assert!(display_output.contains("TRAXES Replay Verification"));
     assert!(display_output.contains("test-123"));
     assert!(display_output.contains("DENY"));
