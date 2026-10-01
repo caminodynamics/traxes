@@ -64,10 +64,20 @@ def propose(path: Path, label: str) -> dict:
 def wait_for_artifact(path_text: str, timeout_seconds: float = 3.0) -> dict:
     path = Path(path_text)
     deadline = time.time() + timeout_seconds
+    last_error = None
+
     while time.time() < deadline:
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+            try:
+                content = path.read_text(encoding="utf-8")
+                if content.strip():
+                    return json.loads(content)
+            except (OSError, json.JSONDecodeError) as exc:
+                last_error = exc
         time.sleep(0.05)
+
+    if last_error is not None:
+        raise AssertionError(f"artifact did not become valid JSON: {path}: {last_error}")
     raise AssertionError(f"artifact did not appear: {path}")
 
 
