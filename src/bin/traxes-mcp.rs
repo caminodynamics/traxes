@@ -131,6 +131,14 @@ impl TraxesMcpServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // MCP stdout belongs exclusively to the protocol, and per-action diagnostic
+    // logging would distort the hot path. Keep it quiet by default; opt back into
+    // debug diagnostics explicitly with TRAXES_MCP_DEBUG=1.
+    traxes_demo::cli_utils::set_demo_mode(true);
+    if std::env::var("TRAXES_MCP_DEBUG").as_deref() == Ok("1") {
+        traxes_demo::cli_utils::set_debug_mode(true);
+    }
+
     let policy_path = std::env::var("TRAXES_POLICY")
         .unwrap_or_else(|_| "policies/file_write_agent_policy.yaml".to_string());
     let policy_yaml = fs::read_to_string(&policy_path)?;
