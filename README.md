@@ -14,10 +14,11 @@ TRAXES decouples decision logic from execution logic, providing a deterministic 
 
 TRAXES evaluates actions before they proceed to the execution layer:
 
-1.  **Proposal**: A system (Agent/Service) proposes an action.
-2.  **Evaluation**: TRAXES evaluates the action against a versioned policy bundle.
-3.  **Gate**: TRAXES returns a strictly typed ALLOW or DENY decision.
-4.  **Evidence**: TRAXES writes a replayable decision artifact containing full evaluation context and cryptographic policy hashes.
+1. **Proposal**: A system (Agent/Service) proposes an action.
+2. **Evaluation**: TRAXES evaluates the action against a versioned policy bundle.
+3. **Gate**: ALLOW can produce an internal, action-bound execution permit; DENY produces no permit.
+4. **Execution**: Governed executors perform the side effect only when presented with valid authorization.
+5. **Evidence**: TRAXES writes a replayable decision artifact containing evaluation context, execution outcome, and cryptographic policy hashes.
 
 ### Execution Flow
 
@@ -25,40 +26,48 @@ TRAXES evaluates actions before they proceed to the execution layer:
 ┌─────────────────────────────────┐
 │ Planner / Agent / Service       │
 └────────────┬────────────────────┘
-             │
+             │ proposed action
              ▼
 ┌─────────────────────────────────┐
 │ TRAXES DECISION ENGINE          │
 │ • Deterministic Policy Match    │
-│ • ALLOW/DENY Decision           │
-│ • Decision Artifact Generation  │
+│ • ALLOW / DENY                  │
+│ • Action-bound authorization    │
+└────────────┬────────────────────┘
+             │ permit only on ALLOW
+             ▼
+┌─────────────────────────────────┐
+│ Governed Execution Layer        │
+│ • Valid permit -> side effect   │
+│ • No permit -> blocked          │
 └────────────┬────────────────────┘
              │
              ▼
 ┌─────────────────────────────────┐
-│ Execution Layer                 │
-│ (Triggered only on ALLOW)       │
+│ Artifact + Replay               │
 └─────────────────────────────────┘
 ```
 
-TRAXES sits at the boundary between intent and action. It does not execute the action itself but provides the deterministic "Yes/No" and the evidence to support it.
+TRAXES sits at the boundary between intent and action. The core engine separates policy evaluation from execution, while governed integrations can consume TRAXES authorization before performing a side effect.
 
 ## Core Properties
 
-*   **Deterministic Evaluation**: Given the same action and policy version, the engine produces an identical result.
-*   **Replayable Artifacts**: Every decision produces an immutable record containing rule evaluation evidence.
-*   **Policy Versioning**: Artifacts include SHA-256 policy hashes to ensure the exact policy version can be identified and re-run.
-*   **Fail-Closed Design**: Malformed inputs, missing policies, or internal errors resolve to an explicit **DENY**.
+* **Deterministic Evaluation**: Given the same action and policy version, the engine produces an identical result.
+* **Replayable Artifacts**: Decisions produce records containing rule evaluation evidence and, where execution is attempted, the observed execution outcome.
+* **Policy Versioning**: Artifacts include SHA-256 policy hashes to identify the policy used for the decision.
+* **Fail-Closed Design**: Missing authorization prevents governed execution.
+* **Action-Bound Authorization**: External callers cannot directly mint execution permits; the intended public workflow obtains authorization through the engine.
 
 ## Quick Start (Demo)
 
 ### Prebuilt Binaries (Windows)
 
-1.  Download `traxes-demo.exe` from [GitHub Releases](https://github.com/caminodynamics/traxes/releases).
-2.  Run the interactive demo:
-    ```powershell
-    .\traxes-demo.exe demo
-    ```
+1. Download `traxes-demo.exe` from [GitHub Releases](https://github.com/caminodynamics/traxes/releases).
+2. Run the interactive demo:
+
+```powershell
+.\traxes-demo.exe demo
+```
 
 ### Source Build (All Platforms)
 
@@ -78,28 +87,82 @@ cargo build --release
 ./target/release/traxes-demo --dev replay <artifact_id>
 ```
 
+## Hardened External-Agent FILE_WRITE Proof
+
+This proof uses an external Python client that can only *propose* FILE_WRITE actions over HTTP. The client does not write the target files itself. TRAXES evaluates each proposed action, performs an allowed write through the governed execution path, blocks a denied write, emits artifacts, and replays both decisions with the same policy.
+
+Build the project:
+
+```powershell
+cargo build
+```
+
+Start the TRAXES server with the dedicated FILE_WRITE policy:
+
+```powershell
+cargo run -- --dev server --policy policies/file_write_agent_policy.yaml
+```
+
+In a second terminal, run:
+
+```powershell
+python agent_filewrite_client.py
+```
+
+Expected result:
+
+```text
+[ALLOW] propose FILE_WRITE -> temp_executed_agent_allowed.txt
+  decision      : ALLOW
+  proof         : exists=true, content_match=true, execution_status=executed, execution_outcome=Executed
+  replay        : verified
+
+[DENY] propose FILE_WRITE -> temp_executed_agent_forbidden.txt
+  decision      : DENY
+  proof         : exists=false, execution_status=blocked, execution_outcome=Unauthorized
+  replay        : verified
+
+PASS - external client can propose actions, but TRAXES controls execution.
+PASS - ALLOW executed, DENY produced no side effect, and both artifacts replayed.
+```
+
+The proof is model-agnostic: any agent or service able to propose the same action payload can use the same boundary.
+
+## Local Verification
+
+Until cloud CI is available, the core local verification set is:
+
+```powershell
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test
+cargo run --example file_write_integration
+git diff --check
+```
+
 ## Performance & Reliability
 
 TRAXES is optimized for high-performance evaluation paths.
 
-*   **Latency**: 0.17-0.61μs average evaluation (engine logic only, 10K iterations, varies across runs).
-*   **Throughput**: 625K-811K ops/sec (single-threaded benchmark, 10K iterations, varies across runs).
-*   **Reliability**: 100% pass rate (18/18 scenarios) in reliability validation, covering concurrency safety, fuzzing, and malformed input handling.
+* **Latency**: 0.17-0.61μs average evaluation (engine logic only, 10K iterations, varies across runs).
+* **Throughput**: 625K-811K ops/sec (single-threaded benchmark, 10K iterations, varies across runs).
+* **Reliability**: 100% pass rate (18/18 scenarios) in reliability validation, covering concurrency safety, fuzzing, and malformed input handling.
 
 See [RELIABILITY.md](RELIABILITY.md) and [PERFORMANCE.md](../PERFORMANCE.md) for detailed metrics.
 
 ## Coverage Tracking
 
 TRAXES tracks policy match coverage across evaluated endpoints (Tool + Environment). Each artifact includes:
-*   **Coverage Status**: `GOVERNED` or `UNGOVERNED`.
-*   **Endpoint Identification**: (e.g., `AWS_RDS_PROVISION::staging`).
-*   **Policy Match Hit**: Verification that a rule actively matched the evaluation path.
+* **Coverage Status**: `GOVERNED` or `UNGOVERNED`.
+* **Endpoint Identification**: (e.g., `AWS_RDS_PROVISION::staging`).
+* **Policy Match Hit**: Verification that a rule actively matched the evaluation path.
 
 This allows governance teams to identify gaps in policy coverage without requiring a manual inventory of every possible action.
 
 ## Requirements
 
 - Rust toolchain for source builds
+- Python 3 for the external-agent FILE_WRITE proof
 - Prebuilt binaries available in GitHub Releases
 
 ## Links
