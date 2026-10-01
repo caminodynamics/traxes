@@ -128,6 +128,32 @@ PASS - ALLOW executed, DENY produced no side effect, and both artifacts replayed
 
 The proof is model-agnostic: any agent or service able to propose the same action payload can use the same boundary.
 
+## MCP Execution-Boundary Proof
+
+TRAXES also exposes the hardened FILE_WRITE boundary as an MCP stdio server. An MCP client discovers `write_file` and `replay_decision`; the adapter routes FILE_WRITE requests through the same `evaluate_with_permit -> execute -> artifact` path used by the hardened integration rather than writing files directly.
+
+Build the MCP server:
+
+```powershell
+cargo build --bin traxes-mcp
+```
+
+A manual MCP client can then call `write_file`. With `policies/file_write_agent_policy.yaml`, the allowed demo path executes while the forbidden path is blocked. Both resulting decision artifacts can be replayed through the `replay_decision` MCP tool.
+
+The automated smoke test launches the MCP server as a child process and verifies tool discovery, ALLOW plus real file creation, DENY plus no file creation, and deterministic replay of both decisions:
+
+```powershell
+cargo test --test mcp_execution_boundary -- --nocapture
+```
+
+Expected result:
+
+```text
+test mcp_file_write_boundary_allow_deny_and_replay ... ok
+
+test result: ok. 1 passed; 0 failed
+```
+
 ## Local Verification
 
 Until cloud CI is available, the core local verification set is:
@@ -137,6 +163,7 @@ cargo fmt --all -- --check
 cargo check --all-targets
 cargo test
 cargo run --example file_write_integration
+cargo test --test mcp_execution_boundary -- --nocapture
 git diff --check
 ```
 
