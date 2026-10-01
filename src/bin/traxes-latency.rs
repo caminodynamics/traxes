@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use traxes_demo::action::{self, ExecutionOutcome, ProposedAction};
 use traxes_demo::artifact::ArtifactLogger;
+use traxes_demo::cli_utils;
 use traxes_demo::traxes_engine::Engine;
 use uuid::Uuid;
 
@@ -74,6 +75,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1_000);
 
+    // Benchmark the execution path itself, not terminal/logging I/O. Without an
+    // async logger, debug_log() falls back to synchronous stderr writes, which
+    // would otherwise dominate DENY and FILE_WRITE measurements.
+    cli_utils::set_demo_mode(true);
+    cli_utils::set_debug_mode(false);
+
     let sandbox = std::env::temp_dir().join(format!("traxes-latency-{}", Uuid::new_v4()));
     fs::create_dir_all(&sandbox)?;
     let allow_path = sandbox.join("allowed.txt");
@@ -103,11 +110,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("TRAXES layered latency benchmark");
     println!("engine iterations : {engine_iterations}");
     println!("I/O iterations    : {io_iterations}");
-    println!("timer resolution  : nanoseconds (reported as microseconds)\n");
+    println!("timer resolution  : nanoseconds (reported as microseconds)");
+    println!("debug/log output  : suppressed during timed sections\n");
 
-    // Warm the pure policy path and the permit path before recording samples.
+    // Warm policy, permit issuance, DENY enforcement, and filesystem paths.
     for _ in 0..10_000 {
         black_box(engine.evaluate(&allow_action));
+
+        let (evaluation, permit) = engine.evaluate_with_permit(&allow_action, "warm-allow");
+        black_box(evaluation);
+        black_box(permit);
+
         let (evaluation, permit) = engine.evaluate_with_permit(&deny_action, "warm-deny");
         black_box(evaluation);
         black_box(action::execute(&deny_action, permit));
@@ -117,11 +130,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         black_box(engine.evaluate(&allow_action));
     });
 
+    let mut permit_issue = measure(
+        "2) ALLOW decision + action-bound permit issuance (no execute)",
+        engine_iterations,
+        |_| {
+            let (evaluation, permit) =
+                engine.evaluate_with_permit(&allow_action, "bench-permit");
+            assert_eq!(evaluation.decision, "ALLOW");
+            assert!(permit.is_some());
+            black_box(evaluation);
+            black_box(permit);
+        },
+    );
+
     let mut deny_boundary = measure(
-        "2) decision + permit enforcement (DENY, no side effect)",
+        "3) DENY decision + enforcement rejection (no side effect)",
         engine_iterations,
         |_| {
             let (evaluation, permit) = engine.evaluate_with_permit(&deny_action, "bench-deny");
+            assert_eq!(evaluation.decision, "DENY");
             black_box(evaluation);
             let outcome = action::execute(&deny_action, permit);
             assert_eq!(outcome, ExecutionOutcome::Unauthorized);
@@ -137,7 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut allow_write = measure(
-        "3) decision + permit + real FILE_WRITE",
+        "4) ALLOW decision + permit + real FILE_WRITE",
         io_iterations,
         |_| {
             let (evaluation, permit) = engine.evaluate_with_permit(&allow_action, "bench-write");
@@ -150,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut artifact_paths = Vec::with_capacity(io_iterations);
     let mut allow_write_artifact = measure(
-        "4) decision + permit + FILE_WRITE + synchronous artifact",
+        "5) ALLOW + FILE_WRITE + synchronous artifact",
         io_iterations,
         |i| {
             let decision_id = format!("latency_{}_{}", std::process::id(), i);
@@ -175,15 +202,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("RESULTS\n-------");
     engine_only.print();
+    permit_issue.print();
     deny_boundary.print();
     allow_write.print();
     allow_write_artifact.print();
 
     println!("Interpretation:");
     println!("  #1 isolates policy evaluation.");
-    println!("  #2 adds permit creation/checking without filesystem work.");
-    println!("  #3 adds the governed target side effect.");
-    println!("  #4 adds durable synchronous artifact I/O.");
+    println!("  #2 adds ALLOW permit issuance, including action serialization + SHA-256 binding.");
+    println!("  #3 measures the fail-closed DENY enforcement path with no target side effect.");
+    println!("  #4 adds the governed filesystem side effect.");
+    println!("  #5 adds durable synchronous artifact I/O.");
     println!("  HTTP and MCP transport benchmarks are measured separately.\n");
 
     for path in artifact_paths {
