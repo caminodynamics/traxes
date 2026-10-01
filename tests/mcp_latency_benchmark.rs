@@ -42,6 +42,14 @@ fn tool_payload<T: serde::Serialize>(result: &T) -> Value {
     serde_json::from_str(text).expect("tool text must contain JSON")
 }
 
+fn artifact_path(payload: &Value) -> PathBuf {
+    PathBuf::from(
+        payload["artifact_path"]
+            .as_str()
+            .expect("benchmark call must produce artifact_path"),
+    )
+}
+
 fn percentile(sorted: &[f64], percentile: f64) -> f64 {
     assert!(!sorted.is_empty());
     let rank = ((percentile / 100.0) * sorted.len() as f64).ceil() as usize;
@@ -91,36 +99,6 @@ fn cleanup_artifacts(manifest_dir: &Path, artifact_paths: &[PathBuf]) {
     }
 }
 
-async fn call_write(
-    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
-    path: &str,
-    expected_decision: &str,
-    expected_status: &str,
-    expected_outcome: &str,
-) -> Result<(f64, PathBuf), Box<dyn std::error::Error>> {
-    let started = Instant::now();
-    let result = client
-        .call_tool(
-            CallToolRequestParams::new("write_file").with_arguments(object!({
-                "path": path,
-                "content": CONTENT,
-            })),
-        )
-        .await?;
-    let elapsed_us = started.elapsed().as_secs_f64() * 1_000_000.0;
-    let payload = tool_payload(&result);
-
-    assert_eq!(payload["decision"], expected_decision);
-    assert_eq!(payload["execution_status"], expected_status);
-    assert_eq!(payload["execution_outcome"], expected_outcome);
-
-    let artifact_path = payload["artifact_path"]
-        .as_str()
-        .expect("benchmark call must produce artifact_path");
-
-    Ok((elapsed_us, PathBuf::from(artifact_path)))
-}
-
 #[tokio::test]
 #[ignore = "manual performance benchmark; run in release mode with --ignored --nocapture"]
 async fn mcp_end_to_end_latency() -> Result<(), Box<dyn std::error::Error>> {
@@ -146,8 +124,8 @@ async fn mcp_end_to_end_latency() -> Result<(), Box<dyn std::error::Error>> {
     let transport = TokioChildProcess::new(Command::new(server_binary).configure(|cmd| {
         cmd.current_dir(manifest_dir)
             .env("TRAXES_POLICY", "policies/file_write_agent_policy.yaml")
-            // Keep the server's current logging behavior in the code path, but avoid
-            // terminal rendering overhead from distorting the latency distribution.
+            // Keep the current server logging code path, but avoid terminal rendering
+            // overhead from distorting the measured latency distribution.
             .stderr(Stdio::null());
     }))?;
     let client = ().serve(transport).await?;
@@ -164,27 +142,77 @@ async fn mcp_end_to_end_latency() -> Result<(), Box<dyn std::error::Error>> {
     println!("timed path        : MCP call -> policy -> permit/deny -> execution -> artifact -> MCP response");
     println!();
 
+    // Warm up both execution paths. Warm-up samples are not included in statistics.
     for _ in 0..warmup {
-        let (_, artifact) = call_write(&client, ALLOW_PATH, "ALLOW", "executed", "Executed").await?;
-        artifact_paths.push(artifact);
-        let (_, artifact) = call_write(&client, DENY_PATH, "DENY", "blocked", "Unauthorized").await?;
-        artifact_paths.push(artifact);
+        let allow_result = client
+            .call_tool(
+                CallToolRequestParams::new("write_file").with_arguments(object!({
+                    "path": ALLOW_PATH,
+                    "content": CONTENT,
+                })),
+            )
+            .await?;
+        let allow = tool_payload(&allow_result);
+        assert_eq!(allow["decision"], "ALLOW");
+        assert_eq!(allow["execution_status"], "executed");
+        assert_eq!(allow["execution_outcome"], "Executed");
+        artifact_paths.push(artifact_path(&allow));
+
+        let deny_result = client
+            .call_tool(
+                CallToolRequestParams::new("write_file").with_arguments(object!({
+                    "path": DENY_PATH,
+                    "content": CONTENT,
+                })),
+            )
+            .await?;
+        let deny = tool_payload(&deny_result);
+        assert_eq!(deny["decision"], "DENY");
+        assert_eq!(deny["execution_status"], "blocked");
+        assert_eq!(deny["execution_outcome"], "Unauthorized");
+        artifact_paths.push(artifact_path(&deny));
     }
 
     let mut allow_samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
-        let (elapsed_us, artifact) =
-            call_write(&client, ALLOW_PATH, "ALLOW", "executed", "Executed").await?;
+        let started = Instant::now();
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("write_file").with_arguments(object!({
+                    "path": ALLOW_PATH,
+                    "content": CONTENT,
+                })),
+            )
+            .await?;
+        let elapsed_us = started.elapsed().as_secs_f64() * 1_000_000.0;
+        let payload = tool_payload(&result);
+
+        assert_eq!(payload["decision"], "ALLOW");
+        assert_eq!(payload["execution_status"], "executed");
+        assert_eq!(payload["execution_outcome"], "Executed");
         allow_samples.push(elapsed_us);
-        artifact_paths.push(artifact);
+        artifact_paths.push(artifact_path(&payload));
     }
 
     let mut deny_samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
-        let (elapsed_us, artifact) =
-            call_write(&client, DENY_PATH, "DENY", "blocked", "Unauthorized").await?;
+        let started = Instant::now();
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("write_file").with_arguments(object!({
+                    "path": DENY_PATH,
+                    "content": CONTENT,
+                })),
+            )
+            .await?;
+        let elapsed_us = started.elapsed().as_secs_f64() * 1_000_000.0;
+        let payload = tool_payload(&result);
+
+        assert_eq!(payload["decision"], "DENY");
+        assert_eq!(payload["execution_status"], "blocked");
+        assert_eq!(payload["execution_outcome"], "Unauthorized");
         deny_samples.push(elapsed_us);
-        artifact_paths.push(artifact);
+        artifact_paths.push(artifact_path(&payload));
     }
 
     assert!(allow_path.exists(), "ALLOW benchmark must create target file");
