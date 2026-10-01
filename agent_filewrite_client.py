@@ -3,7 +3,8 @@
 
 The client never writes or deletes target files directly. It only proposes
 FILE_WRITE actions to TRAXES and then reads filesystem/artifact state to verify
-what TRAXES actually did. The proof also replays each resulting artifact.
+what TRAXES actually did. The proof also replays each resulting artifact with
+the same policy used by the server.
 """
 
 import json
@@ -16,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 SERVER = os.getenv("TRAXES_SERVER_URL", "http://127.0.0.1:8082")
+POLICY = os.getenv("TRAXES_POLICY", "policies/file_write_agent_policy.yaml")
 ALLOW_PATH = Path("temp_executed_agent_allowed.txt")
 DENY_PATH = Path("temp_executed_agent_forbidden.txt")
 CONTENT = "written only after TRAXES ALLOW"
@@ -76,7 +78,7 @@ def replay(decision_id: str, label: str) -> None:
         )
 
     completed = subprocess.run(
-        [str(TRAXES_BIN), "--dev", "replay", decision_id],
+        [str(TRAXES_BIN), "--dev", "replay", decision_id, "--policy", POLICY],
         capture_output=True,
         text=True,
         check=False,
@@ -92,6 +94,7 @@ def replay(decision_id: str, label: str) -> None:
 def main() -> None:
     print("=== TRAXES hardened external-agent FILE_WRITE proof ===")
     print(f"server: {SERVER}")
+    print(f"policy: {POLICY}")
 
     if DENY_PATH.exists():
         raise SystemExit(
