@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""External agent-client proof for the TRAXES HTTP execution boundary.
+"""External agent-client proof for the hardened TRAXES FILE_WRITE boundary.
 
 The client never writes or deletes target files directly. It only proposes
 FILE_WRITE actions to TRAXES and then reads filesystem/artifact state to verify
-what TRAXES actually did.
+what TRAXES actually did. The proof also replays each resulting artifact with
+the same policy used by the server.
 """
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -15,9 +17,16 @@ import urllib.request
 from pathlib import Path
 
 SERVER = os.getenv("TRAXES_SERVER_URL", "http://127.0.0.1:8082")
+POLICY = os.getenv("TRAXES_POLICY", "policies/file_write_agent_policy.yaml")
 ALLOW_PATH = Path("temp_executed_agent_allowed.txt")
 DENY_PATH = Path("temp_executed_agent_forbidden.txt")
 CONTENT = "written only after TRAXES ALLOW"
+TRAXES_BIN = Path(
+    os.getenv(
+        "TRAXES_BIN",
+        "target/debug/traxes-demo.exe" if os.name == "nt" else "target/debug/traxes-demo",
+    )
+)
 
 
 def propose(path: Path, label: str) -> dict:
@@ -43,7 +52,7 @@ def propose(path: Path, label: str) -> dict:
     except urllib.error.URLError as exc:
         raise SystemExit(
             f"Could not reach TRAXES at {SERVER}: {exc}\n"
-            "Start the server first with the command shown in this script's README output."
+            "Start the TRAXES server first, then run this proof again."
         ) from exc
 
     print(f"  decision      : {result['decision']}")
@@ -55,16 +64,47 @@ def propose(path: Path, label: str) -> dict:
 def wait_for_artifact(path_text: str, timeout_seconds: float = 3.0) -> dict:
     path = Path(path_text)
     deadline = time.time() + timeout_seconds
+    last_error = None
+
     while time.time() < deadline:
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+            try:
+                content = path.read_text(encoding="utf-8")
+                if content.strip():
+                    return json.loads(content)
+            except (OSError, json.JSONDecodeError) as exc:
+                last_error = exc
         time.sleep(0.05)
+
+    if last_error is not None:
+        raise AssertionError(f"artifact did not become valid JSON: {path}: {last_error}")
     raise AssertionError(f"artifact did not appear: {path}")
 
 
+def replay(decision_id: str, label: str) -> None:
+    if not TRAXES_BIN.exists():
+        raise SystemExit(
+            f"TRAXES binary not found at {TRAXES_BIN}. Build the project first with `cargo build`."
+        )
+
+    completed = subprocess.run(
+        [str(TRAXES_BIN), "--dev", "replay", decision_id, "--policy", POLICY],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        print(completed.stdout)
+        print(completed.stderr, file=sys.stderr)
+        raise AssertionError(f"{label} replay failed for {decision_id}")
+    assert "REPLAY VERIFIED" in completed.stdout, completed.stdout
+    print("  replay        : verified")
+
+
 def main() -> None:
-    print("=== TRAXES external agent-client FILE_WRITE proof ===")
+    print("=== TRAXES hardened external-agent FILE_WRITE proof ===")
     print(f"server: {SERVER}")
+    print(f"policy: {POLICY}")
 
     if DENY_PATH.exists():
         raise SystemExit(
@@ -77,17 +117,28 @@ def main() -> None:
     assert ALLOW_PATH.read_text(encoding="utf-8") == CONTENT
     allow_artifact = wait_for_artifact(allow["artifact_path"])
     assert allow_artifact["execution_status"] == "executed", allow_artifact["execution_status"]
-    print("  proof         : exists=true, content_match=true, execution_status=executed")
+    assert allow_artifact["execution_outcome"] == "Executed", allow_artifact["execution_outcome"]
+    print(
+        "  proof         : exists=true, content_match=true, "
+        "execution_status=executed, execution_outcome=Executed"
+    )
+    replay(allow["decision_id"], "ALLOW")
 
     deny = propose(DENY_PATH, "DENY")
     assert deny["decision"] == "DENY", deny
     assert not DENY_PATH.exists(), "DENY unexpectedly created the target file"
     deny_artifact = wait_for_artifact(deny["artifact_path"])
     assert deny_artifact["execution_status"] == "blocked", deny_artifact["execution_status"]
-    print("  proof         : exists=false, execution_status=blocked")
+    assert deny_artifact["execution_outcome"] == "Unauthorized", deny_artifact["execution_outcome"]
+    print(
+        "  proof         : exists=false, execution_status=blocked, "
+        "execution_outcome=Unauthorized"
+    )
+    replay(deny["decision_id"], "DENY")
 
     print()
     print("PASS - external client can propose actions, but TRAXES controls execution.")
+    print("PASS - ALLOW executed, DENY produced no side effect, and both artifacts replayed.")
     print("This proof is model-agnostic: any agent can propose actions through the same boundary.")
 
 
